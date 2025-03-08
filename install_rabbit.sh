@@ -38,14 +38,50 @@ sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 
 # Erlang Kurulumu
 echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
-wget -q https://erlang.org/download/otp_src_$ERLANG_VERSION.tar.gz
-tar -xzf otp_src_$ERLANG_VERSION.tar.gz
+
+# Install required dependencies for Erlang compilation
+echo "🔄 Erlang build dependencies installing..."
+sudo apt-get install -y build-essential libncurses5-dev openssl libssl-dev unixodbc-dev fop xsltproc libxml2-utils libwxgtk3.0-gtk3-dev || {
+    echo "❌ Failed to install Erlang build dependencies"
+    exit 1
+}
+
+wget -q https://erlang.org/download/otp_src_$ERLANG_VERSION.tar.gz || {
+    echo "❌ Failed to download Erlang source"
+    exit 1
+}
+
+tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
+    echo "❌ Failed to extract Erlang source"
+    exit 1
+}
+
 cd otp_src_$ERLANG_VERSION
-./configure
-make -j$(nproc)
-sudo make install
+./configure --prefix=/usr/local --without-javac || {
+    echo "❌ Erlang configure failed"
+    exit 1
+}
+
+echo "🔄 Compiling Erlang (this may take a while)..."
+make -j$(nproc) || {
+    echo "❌ Erlang compilation failed"
+    exit 1
+}
+
+echo "🔄 Installing Erlang..."
+sudo make install || {
+    echo "❌ Erlang installation failed"
+    exit 1
+}
+
 cd ..
 rm -rf otp_src_$ERLANG_VERSION*
+
+# Verify Erlang installation
+erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
+    echo "❌ Erlang installation verification failed"
+    exit 1
+}
 
 # RabbitMQ Kurulumu
 echo "🔄 RabbitMQ $RABBITMQ_VERSION kuruluyor..."
