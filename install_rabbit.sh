@@ -41,10 +41,49 @@ echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
 # Install required dependencies for Erlang compilation
 echo "🔄 Erlang build dependencies installing..."
-sudo apt-get install -y build-essential libncurses5-dev openssl libssl-dev unixodbc-dev fop xsltproc libxml2-utils libwxgtk3.0-gtk3-dev || {
-    echo "❌ Failed to install Erlang build dependencies"
+
+# Update package list first
+sudo apt-get update || {
+    echo "❌ Failed to update package list"
     exit 1
 }
+
+# Install dependencies in smaller groups with error checking
+echo "🔄 Installing basic build tools..."
+sudo apt-get install -y build-essential || {
+    echo "❌ Failed to install build-essential"
+    exit 1
+}
+
+echo "🔄 Installing Erlang/OTP dependencies..."
+sudo apt-get install -y \
+    libncurses5-dev \
+    libssl-dev \
+    unixodbc-dev \
+    libgmp-dev \
+    libwxbase3.0-dev \
+    libwxgtk3.0-gtk3-dev \
+    libsctp-dev \
+    || {
+        echo "❌ Failed to install Erlang dependencies"
+        echo "🔄 Trying alternative package names..."
+        # Try alternative package names for different Ubuntu/Debian versions
+        sudo apt-get install -y \
+            libncurses-dev \
+            libwxgtk-webview3.0-gtk3-dev \
+            || {
+                echo "❌ Failed to install alternative packages"
+                exit 1
+            }
+    }
+
+# Optional documentation tools - don't exit if these fail
+echo "🔄 Installing documentation tools (optional)..."
+sudo apt-get install -y \
+    xsltproc \
+    fop \
+    libxml2-utils \
+    || echo "⚠️ Warning: Some documentation tools could not be installed"
 
 wget -q https://erlang.org/download/otp_src_$ERLANG_VERSION.tar.gz || {
     echo "❌ Failed to download Erlang source"
