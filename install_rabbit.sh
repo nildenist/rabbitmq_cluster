@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e  # Hata yakalama
-source rabbitmq.env  # rabbitmq.env dosyasını yükle
+source rabbit.env  # rabbitmq.env dosyasını yükle
 
 # Kullanım kontrolü
 if [ -z "$1" ]; then
