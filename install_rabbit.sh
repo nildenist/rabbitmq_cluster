@@ -195,9 +195,25 @@ sleep 5
 
 # Set the Erlang cookie for all potential locations
 echo "🔄 Setting up Erlang cookies..."
-for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/$(whoami)/.erlang.cookie; do
-    echo "$RABBITMQ_COOKIE" | sudo tee $COOKIE_PATH > /dev/null
-    sudo chmod 400 $COOKIE_PATH
+# First, determine the current user's home directory correctly
+CURRENT_USER=$(whoami)
+CURRENT_USER_HOME=$(eval echo ~$CURRENT_USER)
+
+# Set cookies in required locations
+for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRENT_USER_HOME/.erlang.cookie"; do
+    # Create directory if it doesn't exist
+    sudo mkdir -p "$(dirname $COOKIE_PATH)"
+    
+    # Set the cookie
+    echo "$RABBITMQ_COOKIE" | sudo tee "$COOKIE_PATH" > /dev/null
+    sudo chmod 400 "$COOKIE_PATH"
+    
+    # Set ownership based on location
+    if [[ "$COOKIE_PATH" == "/var/lib/rabbitmq/.erlang.cookie" ]]; then
+        sudo chown rabbitmq:rabbitmq "$COOKIE_PATH"
+    elif [[ "$COOKIE_PATH" == "$CURRENT_USER_HOME/.erlang.cookie" ]]; then
+        sudo chown $CURRENT_USER:$CURRENT_USER "$COOKIE_PATH"
+    fi
 done
 
 # Fix ownership of RabbitMQ directories
@@ -205,7 +221,6 @@ sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
-sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
 
 # Configure RabbitMQ environment
 cat << EOF | sudo tee /etc/rabbitmq/rabbitmq-env.conf
@@ -232,6 +247,18 @@ echo "Hosts file content:"
 cat /etc/hosts
 echo "Cookie content:"
 sudo sha1sum /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie 2>/dev/null || true
+
+# Add after setting cookies
+echo "🔄 Verifying cookie setup..."
+for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRENT_USER_HOME/.erlang.cookie"; do
+    if [ -f "$COOKIE_PATH" ]; then
+        echo "✅ Cookie exists at $COOKIE_PATH"
+        echo "   Owner: $(stat -c '%U:%G' "$COOKIE_PATH")"
+        echo "   Permissions: $(stat -c '%a' "$COOKIE_PATH")"
+    else
+        echo "❌ Cookie file missing at $COOKIE_PATH"
+    fi
+done
 
 # Start RabbitMQ service with proper environment
 echo "🚀 RabbitMQ servisi başlatılıyor..."
