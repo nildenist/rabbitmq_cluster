@@ -39,46 +39,24 @@ sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 # Erlang Kurulumu
 echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
-# Install required dependencies for Erlang compilation
-echo "🔄 Erlang build dependencies installing..."
+# First try the official download URL
+echo "🔄 Downloading Erlang from official source..."
+ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
 
-# Update package list first
-sudo apt-get update || {
-    echo "❌ Failed to update package list"
-    exit 1
-}
-
-# Install dependencies in smaller groups with error checking
-echo "🔄 Installing basic build tools..."
-sudo apt-get install -y build-essential || {
-    echo "❌ Failed to install build-essential"
-    exit 1
-}
-
-echo "🔄 Installing Erlang/OTP dependencies..."
-sudo apt-get install -y \
-    libncurses-dev \
-    libssl-dev \
-    unixodbc-dev \
-    libgmp-dev \
-    libsctp-dev \
-    || {
-        echo "❌ Failed to install core Erlang dependencies"
+if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
+    echo "⚠️ Failed to download from GitHub, trying alternative source..."
+    # Try alternative download URL
+    ERLANG_DOWNLOAD_URL="https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
+    if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
+        echo "❌ Failed to download Erlang source from both sources"
+        echo "Attempted URLs:"
+        echo "1. https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
+        echo "2. https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
         exit 1
-    }
+    fi
+fi
 
-# Optional documentation tools - don't exit if these fail
-echo "🔄 Installing documentation tools (optional)..."
-sudo apt-get install -y \
-    xsltproc \
-    fop \
-    libxml2-utils \
-    || echo "⚠️ Warning: Some documentation tools could not be installed"
-
-wget -q https://erlang.org/download/otp_src_$ERLANG_VERSION.tar.gz || {
-    echo "❌ Failed to download Erlang source"
-    exit 1
-}
+echo "✅ Successfully downloaded Erlang source"
 
 tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
     echo "❌ Failed to extract Erlang source"
@@ -117,10 +95,38 @@ erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
 echo "🔄 RabbitMQ $RABBITMQ_VERSION kuruluyor..."
 wget -q https://github.com/rabbitmq/rabbitmq-server/releases/download/v$RABBITMQ_VERSION/rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
 tar -xf rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
+
+# Remove old installation if exists
+sudo rm -rf /opt/rabbitmq
+sudo rm -f /usr/local/bin/rabbitmqctl
+sudo rm -f /usr/local/bin/rabbitmq-server
+sudo rm -f /usr/local/bin/rabbitmq-env
+
+# Install RabbitMQ
 sudo mv rabbitmq_server-$RABBITMQ_VERSION /opt/rabbitmq
-sudo ln -s /opt/rabbitmq/sbin/rabbitmqctl /usr/local/bin/rabbitmqctl
-sudo ln -s /opt/rabbitmq/sbin/rabbitmq-server /usr/local/bin/rabbitmq-server
+
+# Create all necessary symbolic links
+sudo ln -sf /opt/rabbitmq/sbin/rabbitmqctl /usr/local/bin/rabbitmqctl
+sudo ln -sf /opt/rabbitmq/sbin/rabbitmq-server /usr/local/bin/rabbitmq-server
+sudo ln -sf /opt/rabbitmq/sbin/rabbitmq-env /usr/local/bin/rabbitmq-env
+sudo ln -sf /opt/rabbitmq/sbin/rabbitmq-plugins /usr/local/bin/rabbitmq-plugins
+
+# Clean up downloaded files
 rm -f rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
+
+# Set environment variables
+echo "🔄 Setting up RabbitMQ environment..."
+sudo mkdir -p /etc/rabbitmq
+cat << EOF | sudo tee /etc/rabbitmq/rabbitmq-env.conf
+NODENAME=$NODE_NAME
+NODE_IP_ADDRESS=$NODE_IP
+NODE_PORT=$RABBITMQ_PORT
+RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+EOF
+
+# Ensure proper permissions
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
+sudo chmod -R 755 /opt/rabbitmq
 
 # RabbitMQ Kullanıcısını Ayarla
 sudo useradd --system --no-create-home --shell /bin/false rabbitmq || true
@@ -132,10 +138,17 @@ echo "🔄 RabbitMQ Node İsmi Ayarlanıyor: $NODE_NAME"
 sudo mkdir -p /etc/rabbitmq
 echo "NODENAME=$NODE_NAME" | sudo tee /etc/rabbitmq/rabbitmq-env.conf
 
-# RabbitMQ Servisini Başlat
+# Set RabbitMQ environment for the rabbitmq user
+sudo mkdir -p /var/lib/rabbitmq/mnesia
+sudo mkdir -p /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+
+# Start RabbitMQ service with proper environment
 echo "🚀 RabbitMQ servisi başlatılıyor..."
-sudo -u rabbitmq rabbitmq-server -detached
-sleep 5  # Servisin başlamasını bekleyelim
+sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq rabbitmq-server -detached
+sleep 10  # Give more time for the service to start properly
 
 # RabbitMQ Management Plugin Aç
 echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
