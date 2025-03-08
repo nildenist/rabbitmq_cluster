@@ -39,6 +39,19 @@ sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 # Erlang Kurulumu
 echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
+# Before downloading Erlang
+echo "🔄 Installing Erlang build dependencies..."
+sudo apt-get update && sudo apt-get install -y \
+    build-essential \
+    libncurses-dev \
+    libssl-dev \
+    libgmp-dev \
+    libsctp-dev \
+    || {
+        echo "❌ Failed to install Erlang build dependencies"
+        exit 1
+    }
+
 # First try the official download URL
 echo "🔄 Downloading Erlang from official source..."
 ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
@@ -64,9 +77,12 @@ tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
     exit 1
 }
 
-# Find the extracted directory name
-ERLANG_SRC_DIR=$(find . -maxdepth 1 -type d -name "otp-OTP-${ERLANG_VERSION}*" -o -name "otp_src_${ERLANG_VERSION}*" | head -n 1)
+# Find the extracted directory name (exclude .tar.gz files)
+ERLANG_SRC_DIR=$(find . -maxdepth 1 -type d \( -name "otp-OTP-${ERLANG_VERSION}*" -o -name "otp_src_${ERLANG_VERSION}*" \) ! -name "*.tar.gz" | head -n 1)
 if [ -z "$ERLANG_SRC_DIR" ]; then
+    # List directories to debug
+    echo "🔍 Looking for Erlang directory. Found directories:"
+    ls -la
     echo "❌ Could not find extracted Erlang directory"
     exit 1
 fi
