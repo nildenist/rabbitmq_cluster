@@ -281,14 +281,26 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "🔄 Verifying environment..."
-echo "Node name: $NODE_NAME"
-echo "Node IP: $NODE_IP"
-echo "Hostname: $(hostname)"
-echo "Hosts file content:"
-cat /etc/hosts
-echo "Cookie content:"
-sudo sha1sum /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie 2>/dev/null || true
+echo "🔄 Verifying RabbitMQ installation..."
+if [ ! -f "/opt/rabbitmq/sbin/rabbitmq-server" ]; then
+    echo "❌ RabbitMQ server binary not found"
+    exit 1
+fi
+
+# Check if all required files exist
+for file in rabbitmqctl rabbitmq-server rabbitmq-env rabbitmq-plugins; do
+    if [ ! -f "/usr/local/bin/$file" ]; then
+        echo "❌ Missing symlink: $file"
+        exit 1
+    fi
+done
+
+# Verify RabbitMQ version
+echo "🔄 Checking RabbitMQ version..."
+rabbitmqctl version || {
+    echo "❌ Failed to get RabbitMQ version"
+    exit 1
+}
 
 # Add after setting cookies
 echo "🔄 Verifying cookie setup..."
@@ -358,22 +370,25 @@ sudo -u rabbitmq bash -c '
     export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@'"${SHORTNAME}"'.log
     export RABBITMQ_DIST_PORT=25672
     export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid
+    export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+    export RABBITMQ_SERVER_START_ARGS="-detached"
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
-    # Start server in foreground first to catch any errors
+    # Start server with debug output
+    echo "Starting RabbitMQ server..."
     rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1 &
     SERVER_PID=$!
     
-    # Wait a bit and check if process is still running
+    # Wait and check process
     sleep 5
     if kill -0 $SERVER_PID 2>/dev/null; then
         echo "Server started successfully with PID: $SERVER_PID"
-        # Now detach it
         disown $SERVER_PID
     else
-        echo "Server failed to start. Check startup.log"
+        echo "Server failed to start. Showing startup log:"
+        cat /var/log/rabbitmq/startup.log
         exit 1
     fi
 '
@@ -381,7 +396,18 @@ sudo -u rabbitmq bash -c '
 # Check startup log immediately
 echo "🔄 Checking startup log..."
 if [ -f /var/log/rabbitmq/startup.log ]; then
+    echo "Startup log contents:"
     cat /var/log/rabbitmq/startup.log
+    echo "System log contents:"
+    sudo journalctl -u rabbitmq-server --no-pager -n 50
+    echo "EPMD status:"
+    epmd -names
+    echo "Process status:"
+    ps aux | grep rabbit
+    echo "Directory permissions:"
+    ls -la /var/lib/rabbitmq/mnesia/
+    ls -la /var/log/rabbitmq/
+    ls -la /etc/rabbitmq/
 else
     echo "❌ No startup log found"
 fi
