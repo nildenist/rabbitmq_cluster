@@ -281,12 +281,14 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "�� Verifying RabbitMQ server binary..."
-if [ ! -x "/opt/rabbitmq/sbin/rabbitmq-server" ]; then
-    echo "❌ RabbitMQ server binary not executable"
-    ls -l /opt/rabbitmq/sbin/rabbitmq-server
-    exit 1
-fi
+echo "�� Verifying RabbitMQ installation..."
+ls -l /opt/rabbitmq/sbin/rabbitmq-server
+ls -l /usr/local/bin/rabbitmq-server
+file /opt/rabbitmq/sbin/rabbitmq-server
+echo "🔄 Verifying RabbitMQ directories:"
+ls -ld /var/lib/rabbitmq
+ls -ld /var/log/rabbitmq
+ls -ld /etc/rabbitmq
 
 # Test rabbitmq-env script
 echo "🔄 Testing RabbitMQ environment..."
@@ -383,6 +385,7 @@ sudo chmod 644 /tmp/rabbitmq-env
 
 # Start RabbitMQ with explicit environment
 sudo -u rabbitmq bash -c '
+    set -x  # Enable debug output
     set -a  # Automatically export all variables
     source /tmp/rabbitmq-env
     set +a
@@ -392,27 +395,37 @@ sudo -u rabbitmq bash -c '
     
     cd /var/lib/rabbitmq
     
-    # Start server with debug output
+    # Start server directly (not detached) to see output
     echo "Starting RabbitMQ server..."
-    /opt/rabbitmq/sbin/rabbitmq-server -detached > /var/log/rabbitmq/startup.log 2>&1
-    
-    # Wait for PID file with better feedback
-    for i in $(seq 1 30); do
-        if [ -f "${RABBITMQ_PID_FILE}" ]; then
-            echo "PID file found at ${RABBITMQ_PID_FILE}"
-            pid=$(cat "${RABBITMQ_PID_FILE}")
-            echo "RabbitMQ running with PID: $pid"
-            break
-        fi
-        echo "Waiting for PID file... ($i/30) at ${RABBITMQ_PID_FILE}"
-        sleep 1
-    done
-'
+    exec /opt/rabbitmq/sbin/rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1
+' &
 
-# Check if server started successfully
-if [ -f "/var/log/rabbitmq/startup.log" ]; then
-    echo "🔍 Startup log contents:"
+# Wait for server to start
+echo "🔄 Waiting for RabbitMQ to start..."
+for i in $(seq 1 30); do
+    if sudo rabbitmqctl status >/dev/null 2>&1; then
+        echo "✅ RabbitMQ is running"
+        break
+    fi
+    echo "⏳ Waiting for RabbitMQ to start ($i/30)"
+    echo "🔍 Current logs:"
+    tail -n 5 /var/log/rabbitmq/startup.log
+    tail -n 5 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+    sleep 2
+done
+
+# Check final status
+if ! sudo rabbitmqctl status >/dev/null 2>&1; then
+    echo "❌ RabbitMQ failed to start"
+    echo "🔍 Startup log:"
     cat /var/log/rabbitmq/startup.log
+    echo "🔍 Main log:"
+    cat /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+    echo "🔍 Process status:"
+    ps aux | grep -E "[r]abbit|[b]eam"
+    echo "🔍 EPMD status:"
+    epmd -names
+    exit 1
 fi
 
 # Check process
