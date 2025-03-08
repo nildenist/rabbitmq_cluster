@@ -37,28 +37,18 @@ echo "📌 Node IP: $NODE_IP"
 sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 
 # Erlang Kurulumu
-echo "🔄 Installing Erlang from repository..."
-# Add Erlang Solutions repository
-wget -O- https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo apt-key add -
-echo "deb https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
+echo "🔄 Installing Erlang..."
+sudo apt-get update
+sudo apt-get install -y wget gnupg
+
+# Add the Erlang repository
+curl -fsSL https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo gpg --dearmor -o /usr/share/keyrings/erlang.gpg
+echo "deb [signed-by=/usr/share/keyrings/erlang.gpg] https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
 
 # Update and install Erlang
 sudo apt-get update
-sudo apt-get install -y erlang-base \
-    erlang-asn1 \
-    erlang-crypto \
-    erlang-public-key \
-    erlang-ssl \
-    erlang-syntax-tools \
-    erlang-mnesia \
-    erlang-runtime-tools \
-    erlang-snmp \
-    erlang-os-mon \
-    erlang-parsetools \
-    erlang-inets \
-    erlang-tools \
-    erlang-xmerl || {
-    echo "❌ Failed to install Erlang packages"
+sudo apt-get install -y erlang-nox || {
+    echo "❌ Failed to install Erlang"
     exit 1
 }
 
