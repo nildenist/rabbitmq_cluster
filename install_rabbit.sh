@@ -81,6 +81,20 @@ echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie
 sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
 sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
 
+# Restart RabbitMQ to apply cookie changes
+echo "🔄 Restarting RabbitMQ service..."
+sudo rabbitmqctl stop
+sleep 5
+sudo -u rabbitmq rabbitmq-server -detached
+sleep 5
+
+# Check connectivity to master
+echo "🔄 Checking connectivity to master node..."
+if ! ping -c 1 $MASTER_IP &> /dev/null; then
+    echo "❌ Cannot reach master node at $MASTER_IP"
+    exit 1
+fi
+
 # Master Node Ayarları
 if [ "$NODE_TYPE" == "master" ]; then
     echo "🔄 Master node yapılandırılıyor..."
@@ -119,3 +133,15 @@ echo "✅ RabbitMQ ve Erlang Kurulumu Tamamlandı!"
 echo "📌 RabbitMQ Yönetim Paneli: http://$MASTER_IP:15672"
 echo "📌 Kullanıcı Adı: $RABBITMQ_ADMIN_USER"
 echo "📌 Şifre: $RABBITMQ_ADMIN_PASSWORD"
+
+echo "🔄 Checking host resolution..."
+# Add hosts entries if they don't exist
+if ! grep -q "$MASTER_IP.*master-node" /etc/hosts; then
+    echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
+fi
+if ! grep -q "$WORKER_1_IP.*worker1" /etc/hosts; then
+    echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
+fi
+if ! grep -q "$WORKER_2_IP.*worker2" /etc/hosts; then
+    echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+fi
