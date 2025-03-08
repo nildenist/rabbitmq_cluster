@@ -1,22 +1,37 @@
 #!/bin/bash
 
 set -e  # Hata yakalama
-source rabbit.env  # rabbitmq.env dosyasını yükle
+source rabbitmq.env  # rabbitmq.env dosyasını yükle
 
 # Kullanım kontrolü
 if [ -z "$1" ]; then
-    echo "❌ Kullanım: ./install_rabbitmq.sh [master|worker]"
+    echo "❌ Kullanım: ./install_rabbitmq.sh [master|worker1|worker2]"
     exit 1
 fi
 
 NODE_TYPE=$1  # Kullanıcıdan alınan node tipi
-FULL_NODE_NAME="rabbit@$NODE_NAME"
+
+# Node tipine göre ismi ve IP adresini belirle
+if [ "$NODE_TYPE" == "master" ]; then
+    NODE_NAME=$MASTER_NODE_NAME
+    NODE_IP=$MASTER_IP
+elif [ "$NODE_TYPE" == "worker1" ]; then
+    NODE_NAME=$WORKER_1_NODE_NAME
+    NODE_IP=$WORKER_1_IP
+elif [ "$NODE_TYPE" == "worker2" ]; then
+    NODE_NAME=$WORKER_2_NODE_NAME
+    NODE_IP=$WORKER_2_IP
+else
+    echo "❌ Geçersiz node tipi! Kullanım: ./install_rabbitmq.sh [master|worker1|worker2]"
+    exit 1
+fi
 
 echo "🚀 RabbitMQ ve Erlang Kurulum Başlıyor..."
 echo "📌 Erlang Version: $ERLANG_VERSION"
 echo "📌 RabbitMQ Version: $RABBITMQ_VERSION"
 echo "📌 Node Type: $NODE_TYPE"
-echo "📌 Node Name: $FULL_NODE_NAME"
+echo "📌 Node Name: $NODE_NAME"
+echo "📌 Node IP: $NODE_IP"
 
 # Gerekli bağımlılıkları yükleyelim
 sudo apt update && sudo apt install -y curl gnupg apt-transport-https
@@ -47,9 +62,9 @@ sudo mkdir -p /var/lib/rabbitmq /var/log/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq /var/log/rabbitmq
 
 # RabbitMQ Node İsmini Ayarla
-echo "🔄 RabbitMQ Node İsmi Ayarlanıyor: $FULL_NODE_NAME"
+echo "🔄 RabbitMQ Node İsmi Ayarlanıyor: $NODE_NAME"
 sudo mkdir -p /etc/rabbitmq
-echo "NODENAME=$FULL_NODE_NAME" | sudo tee /etc/rabbitmq/rabbitmq-env.conf
+echo "NODENAME=$NODE_NAME" | sudo tee /etc/rabbitmq/rabbitmq-env.conf
 
 # RabbitMQ Servisini Başlat
 echo "🚀 RabbitMQ servisi başlatılıyor..."
@@ -81,17 +96,17 @@ if [ "$NODE_TYPE" == "master" ]; then
     echo "✅ Master Node Kurulumu Tamamlandı!"
 
 # Worker Node Ayarları
-elif [ "$NODE_TYPE" == "worker" ]; then
-    echo "🔄 Worker node yapılandırılıyor..."
+elif [ "$NODE_TYPE" == "worker1" ] || [ "$NODE_TYPE" == "worker2" ]; then
+    echo "🔄 $NODE_NAME, Master Node'a bağlanıyor: $MASTER_NODE_NAME ($MASTER_IP)"
     sudo rabbitmqctl stop_app
     sudo rabbitmqctl reset
-    sudo rabbitmqctl join_cluster $RABBITMQ_NODENAME
+    sudo rabbitmqctl join_cluster $MASTER_NODE_NAME
     sudo rabbitmqctl start_app
 
-    echo "✅ Worker Node Master'a Bağlandı: $RABBITMQ_NODENAME"
+    echo "✅ Worker Node Master'a Bağlandı: $MASTER_NODE_NAME"
 
 else
-    echo "❌ Geçersiz node tipi! Kullanım: ./install_rabbitmq.sh [master|worker]"
+    echo "❌ Geçersiz node tipi!"
     exit 1
 fi
 
@@ -101,6 +116,6 @@ sudo mkdir -p $RABBITMQ_LOG_DIR $RABBITMQ_MNESIA_DIR
 sudo chown -R rabbitmq:rabbitmq $RABBITMQ_LOG_DIR $RABBITMQ_MNESIA_DIR
 
 echo "✅ RabbitMQ ve Erlang Kurulumu Tamamlandı!"
-echo "📌 RabbitMQ Yönetim Paneli: http://$(hostname -I | awk '{print $1}'):15672"
+echo "📌 RabbitMQ Yönetim Paneli: http://$MASTER_IP:15672"
 echo "📌 Kullanıcı Adı: $RABBITMQ_ADMIN_USER"
 echo "📌 Şifre: $RABBITMQ_ADMIN_PASSWORD"
