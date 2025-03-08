@@ -281,28 +281,19 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "🔄 Verifying RabbitMQ files..."
-for dir in /opt/rabbitmq/sbin /opt/rabbitmq/etc /opt/rabbitmq/plugins; do
-    if [ ! -d "$dir" ]; then
-        echo "❌ Missing directory: $dir"
-        exit 1
-    fi
-done
-
-for file in rabbitmq-server rabbitmqctl rabbitmq-plugins rabbitmq-env; do
-    if [ ! -f "/opt/rabbitmq/sbin/$file" ]; then
-        echo "❌ Missing file: /opt/rabbitmq/sbin/$file"
-        exit 1
-    fi
-    if [ ! -x "/opt/rabbitmq/sbin/$file" ]; then
-        echo "❌ File not executable: /opt/rabbitmq/sbin/$file"
-        sudo chmod +x "/opt/rabbitmq/sbin/$file"
-    fi
-done
+echo "�� Verifying RabbitMQ server binary..."
+if [ ! -x "/opt/rabbitmq/sbin/rabbitmq-server" ]; then
+    echo "❌ RabbitMQ server binary not executable"
+    ls -l /opt/rabbitmq/sbin/rabbitmq-server
+    exit 1
+fi
 
 # Test rabbitmq-env script
-echo "🔄 Testing rabbitmq-env script..."
-/opt/rabbitmq/sbin/rabbitmq-env
+echo "🔄 Testing RabbitMQ environment..."
+/opt/rabbitmq/sbin/rabbitmq-env || {
+    echo "❌ RabbitMQ environment test failed"
+    exit 1
+}
 
 # Verify RabbitMQ version
 echo "🔄 Checking RabbitMQ version..."
@@ -368,113 +359,78 @@ echo "RabbitMQ user home: $(eval echo ~rabbitmq)"
 # Start RabbitMQ with more verbose output
 echo "🚀 Starting RabbitMQ service..."
 
-# Debug the variables before starting
-echo "Variables before starting:"
-echo "NODE_NAME: [$NODE_NAME]"
-echo "NODE_IP: [$NODE_IP]"
-echo "RABBITMQ_PORT: [$RABBITMQ_PORT]"
-echo "SHORTNAME: [$SHORTNAME]"
-
-# Create a temporary environment file
+# Create a temporary environment file with explicit exports
 cat << EOF > /tmp/rabbitmq-env
-RABBITMQ_HOME=/opt/rabbitmq
-RABBITMQ_NODENAME=${NODE_NAME}
-RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
-RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
-RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-RABBITMQ_LOG_BASE=/var/log/rabbitmq
-RABBITMQ_CONSOLE_LOG=new
-RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@${SHORTNAME}.log
-RABBITMQ_DIST_PORT=25672
-RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid
-RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-PATH=/opt/rabbitmq/sbin:$PATH
-LANG=en_US.UTF-8
-LC_ALL=en_US.UTF-8
+export HOME=/var/lib/rabbitmq
+export RABBITMQ_HOME=/opt/rabbitmq
+export RABBITMQ_NODENAME="${NODE_NAME}"
+export RABBITMQ_NODE_IP_ADDRESS="${NODE_IP}"
+export RABBITMQ_NODE_PORT="${RABBITMQ_PORT}"
+export RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+export RABBITMQ_LOG_BASE=/var/log/rabbitmq
+export RABBITMQ_CONSOLE_LOG=new
+export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@${SHORTNAME}.log
+export RABBITMQ_DIST_PORT=25672
+export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid
+export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+export PATH=/opt/rabbitmq/sbin:\$PATH
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 EOF
 
 sudo chown rabbitmq:rabbitmq /tmp/rabbitmq-env
+sudo chmod 644 /tmp/rabbitmq-env
 
-# Start RabbitMQ using the environment file
+# Start RabbitMQ with explicit environment
 sudo -u rabbitmq bash -c '
+    set -a  # Automatically export all variables
     source /tmp/rabbitmq-env
-    cd /var/lib/rabbitmq
+    set +a
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
-    rabbitmq-server -detached > /var/log/rabbitmq/startup.log 2>&1 &
+    cd /var/lib/rabbitmq
     
-    # Wait for PID file
+    # Start server with debug output
+    echo "Starting RabbitMQ server..."
+    /opt/rabbitmq/sbin/rabbitmq-server -detached > /var/log/rabbitmq/startup.log 2>&1
+    
+    # Wait for PID file with better feedback
     for i in $(seq 1 30); do
-        if [ -f "$RABBITMQ_PID_FILE" ]; then
-            echo "PID file found"
+        if [ -f "${RABBITMQ_PID_FILE}" ]; then
+            echo "PID file found at ${RABBITMQ_PID_FILE}"
+            pid=$(cat "${RABBITMQ_PID_FILE}")
+            echo "RabbitMQ running with PID: $pid"
             break
         fi
-        echo "Waiting for PID file... ($i/30)"
+        echo "Waiting for PID file... ($i/30) at ${RABBITMQ_PID_FILE}"
         sleep 1
     done
 '
 
-# Clean up
-rm -f /tmp/rabbitmq-env
-
-# Print debug information
-echo "Debug information after startup:"
-echo "NODE_NAME: $NODE_NAME"
-echo "NODE_IP: $NODE_IP"
-echo "RABBITMQ_PORT: $RABBITMQ_PORT"
-echo "SHORTNAME: $SHORTNAME"
-
-# Wait a moment
-sleep 5
-
-# More detailed process check
-echo "🔍 Checking for RabbitMQ processes:"
-ps aux | grep -E "rabbit|beam|epmd"
-
-# Check EPMD status
-echo "🔍 Checking EPMD status:"
-epmd -names
-
-# Check logs
-echo "🔍 Checking startup log:"
-if [ -f /var/log/rabbitmq/startup.log ]; then
+# Check if server started successfully
+if [ -f "/var/log/rabbitmq/startup.log" ]; then
+    echo "🔍 Startup log contents:"
     cat /var/log/rabbitmq/startup.log
 fi
 
-echo "🔍 Checking main log:"
-if [ -f "/var/log/rabbitmq/rabbit@${SHORTNAME}.log" ]; then
-    cat "/var/log/rabbitmq/rabbit@${SHORTNAME}.log"
-fi
+# Check process
+echo "🔍 Checking RabbitMQ processes:"
+ps aux | grep -E "[r]abbit|[b]eam"
 
-# Check if the process is running
-if pgrep -f "beam.*rabbit" > /dev/null; then
-    echo "✅ RabbitMQ process found"
-else
-    echo "❌ RabbitMQ process not found"
-    
-    echo "🔍 Checking system limits:"
-    ulimit -a
-    
-    echo "🔍 Checking system resources:"
-    free -m
-    df -h
-    
-    echo "🔍 Checking Erlang installation:"
-    which erl
-    erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell
-    
-    echo "🔍 Checking RabbitMQ installation:"
-    ls -l /opt/rabbitmq/sbin/
-    ls -l /usr/local/bin/rabbitmq*
-    
-    echo "🔍 Checking configuration:"
-    cat /etc/rabbitmq/rabbitmq.conf
-    cat /etc/rabbitmq/rabbitmq-env.conf
-    
+# Check EPMD
+echo "🔍 Checking EPMD status:"
+epmd -names
+
+# Check if server is responding
+echo "🔍 Checking server status:"
+sudo rabbitmqctl status || {
+    echo "❌ RabbitMQ failed to start"
+    echo "🔍 Last 50 lines of logs:"
+    tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
     exit 1
-fi
+}
 
 # Verify node is running
 echo "🔄 Verifying RabbitMQ node status..."
