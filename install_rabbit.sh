@@ -37,34 +37,89 @@ echo "📌 Node IP: $NODE_IP"
 sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 
 # Erlang Kurulumu
-echo "🔄 Installing Erlang..."
-sudo apt-get update
-sudo apt-get install -y wget gnupg
+echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
-# Add the Erlang repository (using jammy instead of noble)
-curl -fsSL https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo gpg --dearmor -o /usr/share/keyrings/erlang.gpg
-echo "deb [signed-by=/usr/share/keyrings/erlang.gpg] https://packages.erlang-solutions.com/ubuntu jammy contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
-
-# Update and install Erlang
-sudo apt-get update || {
-    echo "⚠️ Repository update failed, trying alternative approach..."
-    # If update fails, try installing from Ubuntu's default repository
-    sudo apt-get install -y erlang || {
-        echo "❌ Failed to install Erlang"
+# Install build dependencies
+echo "🔄 Installing build dependencies..."
+sudo apt-get update && sudo apt-get install -y \
+    build-essential \
+    autoconf \
+    m4 \
+    libncurses5-dev \
+    libssh-dev \
+    unixodbc-dev \
+    libgmp3-dev \
+    libssl-dev \
+    libsctp-dev \
+    lksctp-tools \
+    ed \
+    flex \
+    libxml2-utils \
+    || {
+        echo "❌ Failed to install build dependencies"
         exit 1
     }
+
+# Download and extract Erlang source
+echo "🔄 Downloading Erlang source..."
+wget -q https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz || {
+    echo "❌ Failed to download Erlang source"
+    exit 1
 }
 
-# Try to install erlang-nox if the repository update succeeded
-if [ $? -eq 0 ]; then
-    sudo apt-get install -y erlang-nox || {
-        echo "❌ Failed to install Erlang"
+tar xzf OTP-${ERLANG_VERSION}.tar.gz || {
+    echo "❌ Failed to extract Erlang source"
+    exit 1
+}
+
+cd otp-OTP-${ERLANG_VERSION} || {
+    echo "❌ Failed to change to Erlang directory"
+    exit 1
+}
+
+# Prepare for build
+echo "🔄 Preparing Erlang build..."
+./otp_build autoconf || {
+    echo "❌ Failed to run autoconf"
+    exit 1
+}
+
+# Configure with minimal components needed for RabbitMQ
+./configure --prefix=/usr/local \
+    --without-wx \
+    --without-debugger \
+    --without-observer \
+    --without-javac \
+    --enable-threads \
+    --enable-smp-support \
+    --enable-kernel-poll \
+    --enable-hipe \
+    --with-ssl \
+    || {
+        echo "❌ Configure failed"
         exit 1
     }
-fi
 
-# Verify Erlang installation
-erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
+# Build and install
+echo "🔄 Building Erlang (this may take a while)..."
+make -j$(nproc) || {
+    echo "❌ Make failed"
+    exit 1
+}
+
+echo "🔄 Installing Erlang..."
+sudo make install || {
+    echo "❌ Make install failed"
+    exit 1
+}
+
+# Cleanup
+cd ..
+rm -rf otp-OTP-${ERLANG_VERSION}*
+
+# Verify installation
+echo "🔄 Verifying Erlang installation..."
+erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell || {
     echo "❌ Erlang installation verification failed"
     exit 1
 }
