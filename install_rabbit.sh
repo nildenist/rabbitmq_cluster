@@ -99,11 +99,16 @@ echo "🔄 Preparing Erlang build..."
     --without-debugger \
     --without-observer \
     --without-javac \
+    --without-et \
+    --without-megaco \
+    --without-diameter \
+    --without-edoc \
     --enable-threads \
     --enable-smp-support \
     --enable-kernel-poll \
-    --enable-hipe \
-    --with-ssl \
+    --disable-hipe \
+    --disable-sctp \
+    --disable-dynamic-ssl-lib \
     || {
         echo "❌ Configure failed"
         exit 1
