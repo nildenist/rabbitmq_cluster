@@ -302,6 +302,21 @@ for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRE
     fi
 done
 
+# Before starting RabbitMQ
+echo "🔄 Verifying Erlang cookie consistency..."
+COOKIE_HASH=$(echo "$RABBITMQ_COOKIE" | sha1sum | cut -d' ' -f1)
+for COOKIE_FILE in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRENT_USER_HOME/.erlang.cookie"; do
+    if [ -f "$COOKIE_FILE" ]; then
+        CURRENT_HASH=$(sudo cat "$COOKIE_FILE" | sha1sum | cut -d' ' -f1)
+        if [ "$COOKIE_HASH" != "$CURRENT_HASH" ]; then
+            echo "❌ Cookie mismatch in $COOKIE_FILE"
+            echo "Expected: $COOKIE_HASH"
+            echo "Got: $CURRENT_HASH"
+            exit 1
+        fi
+    fi
+done
+
 # Before starting RabbitMQ service
 echo "🔄 Preparing RabbitMQ environment..."
 
@@ -342,21 +357,48 @@ sudo -u rabbitmq bash -c '
     export RABBITMQ_CONSOLE_LOG=new
     export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@'"${SHORTNAME}"'.log
     export RABBITMQ_DIST_PORT=25672
+    export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
-    rabbitmq-server -detached
+    # Start server in foreground first to catch any errors
+    rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1 &
+    SERVER_PID=$!
+    
+    # Wait a bit and check if process is still running
+    sleep 5
+    if kill -0 $SERVER_PID 2>/dev/null; then
+        echo "Server started successfully with PID: $SERVER_PID"
+        # Now detach it
+        disown $SERVER_PID
+    else
+        echo "Server failed to start. Check startup.log"
+        exit 1
+    fi
 '
+
+# Check startup log immediately
+echo "🔄 Checking startup log..."
+if [ -f /var/log/rabbitmq/startup.log ]; then
+    cat /var/log/rabbitmq/startup.log
+else
+    echo "❌ No startup log found"
+fi
 
 # Wait for RabbitMQ to fully start
 echo "🔄 Waiting for RabbitMQ to start..."
 MAX_ATTEMPTS=30
 ATTEMPT=0
 while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-    if sudo rabbitmqctl wait --timeout 5 /var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid; then
-        echo "✅ RabbitMQ is fully started"
-        break
+    # First check if process is running
+    if pgrep -f "beam.*rabbit" > /dev/null; then
+        echo "✅ RabbitMQ process is running"
+        # Then check if it's responding to commands
+        if sudo rabbitmqctl status >/dev/null 2>&1; then
+            echo "✅ RabbitMQ is fully started and responding"
+            break
+        fi
     fi
     ATTEMPT=$((ATTEMPT+1))
     echo "⏳ Still waiting... ($ATTEMPT/$MAX_ATTEMPTS)"
@@ -365,8 +407,13 @@ done
 
 if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
     echo "❌ RabbitMQ failed to start properly"
-    echo "🔍 Last 50 lines of log:"
+    echo "🔍 Process status:"
+    ps aux | grep rabbit
+    echo "🔍 Log contents:"
+    sudo tail -n 50 /var/log/rabbitmq/startup.log
     sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+    echo "🔍 EPMD status:"
+    epmd -names
     exit 1
 fi
 
