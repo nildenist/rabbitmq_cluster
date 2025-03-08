@@ -367,25 +367,25 @@ echo "RabbitMQ user home: $(eval echo ~rabbitmq)"
 
 # Start RabbitMQ with more verbose output
 echo "🚀 Starting RabbitMQ service..."
-sudo -u rabbitmq bash -c '
+sudo -u rabbitmq bash -c "
     export HOME=/var/lib/rabbitmq
     export RABBITMQ_HOME=/opt/rabbitmq
-    export RABBITMQ_NODENAME='"$NODE_NAME"'
-    export RABBITMQ_NODE_IP_ADDRESS='"$NODE_IP"'
-    export RABBITMQ_NODE_PORT='"$RABBITMQ_PORT"'
+    export RABBITMQ_NODENAME='${NODE_NAME}'
+    export RABBITMQ_NODE_IP_ADDRESS='${NODE_IP}'
+    export RABBITMQ_NODE_PORT='${RABBITMQ_PORT}'
     export RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
     export RABBITMQ_LOG_BASE=/var/log/rabbitmq
     export RABBITMQ_CONSOLE_LOG=new
-    export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@'"${SHORTNAME}"'.log
+    export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@${SHORTNAME}.log
     export RABBITMQ_DIST_PORT=25672
-    export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid
+    export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid
     export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-    export RABBITMQ_SERVER_START_ARGS=""
-    export PATH=/opt/rabbitmq/sbin:$PATH
+    export RABBITMQ_SERVER_START_ARGS=''
+    export PATH=/opt/rabbitmq/sbin:\$PATH
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
     
-    echo "Starting server with environment:"
+    echo 'Starting server with environment:'
     env | grep RABBIT
     
     # Try to start the server with debug output
@@ -393,15 +393,15 @@ sudo -u rabbitmq bash -c '
     rabbitmq-server -detached > /var/log/rabbitmq/startup.log 2>&1 &
     
     # Wait for PID file
-    for i in $(seq 1 30); do
-        if [ -f "/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid" ]; then
-            echo "PID file found"
+    for i in \$(seq 1 30); do
+        if [ -f '/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid' ]; then
+            echo 'PID file found'
             break
         fi
-        echo "Waiting for PID file... ($i/30)"
+        echo \"Waiting for PID file... (\$i/30)\"
         sleep 1
     done
-'
+"
 
 # Wait a moment
 sleep 5
