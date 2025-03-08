@@ -74,19 +74,19 @@ else
 
     # Download and extract Erlang source
     echo "🔄 Downloading Erlang source..."
-    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
+    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
     wget -q "$ERLANG_DOWNLOAD_URL" || {
         echo "❌ Failed to download Erlang source"
         echo "URL: $ERLANG_DOWNLOAD_URL"
         exit 1
     }
 
-    tar xzf OTP-${ERLANG_VERSION}.tar.gz || {
+    tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
         echo "❌ Failed to extract Erlang source"
         exit 1
     }
 
-    cd otp-OTP-${ERLANG_VERSION} || {
+    cd otp_src_${ERLANG_VERSION} || {
         echo "❌ Failed to change to Erlang directory"
         exit 1
     }
@@ -134,7 +134,7 @@ else
 
     # Cleanup
     cd ..
-    rm -rf otp-OTP-${ERLANG_VERSION}*
+    rm -rf otp_src_${ERLANG_VERSION}*
 
     # Verify installation
     echo "🔄 Verifying Erlang installation..."
@@ -281,7 +281,7 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "�� Verifying RabbitMQ files..."
+echo "🔄 Verifying RabbitMQ files..."
 for dir in /opt/rabbitmq/sbin /opt/rabbitmq/etc /opt/rabbitmq/plugins; do
     if [ ! -d "$dir" ]; then
         echo "❌ Missing directory: $dir"
@@ -380,42 +380,75 @@ sudo -u rabbitmq bash -c '
     export RABBITMQ_DIST_PORT=25672
     export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid
     export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-    export RABBITMQ_SERVER_START_ARGS="-detached"
-    export PATH=$PATH:/opt/rabbitmq/sbin
+    export RABBITMQ_SERVER_START_ARGS=""
+    export PATH=/opt/rabbitmq/sbin:$PATH
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
-    # Try to start the server directly (not detached) to see errors
+    # Try to start the server with debug output
     cd /var/lib/rabbitmq
-    exec rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1
+    rabbitmq-server -detached > /var/log/rabbitmq/startup.log 2>&1 &
+    
+    # Wait for PID file
+    for i in $(seq 1 30); do
+        if [ -f "/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid" ]; then
+            echo "PID file found"
+            break
+        fi
+        echo "Waiting for PID file... ($i/30)"
+        sleep 1
+    done
 '
 
 # Wait a moment
 sleep 5
+
+# More detailed process check
+echo "🔍 Checking for RabbitMQ processes:"
+ps aux | grep -E "rabbit|beam|epmd"
+
+# Check EPMD status
+echo "🔍 Checking EPMD status:"
+epmd -names
+
+# Check logs
+echo "🔍 Checking startup log:"
+if [ -f /var/log/rabbitmq/startup.log ]; then
+    cat /var/log/rabbitmq/startup.log
+fi
+
+echo "🔍 Checking main log:"
+if [ -f "/var/log/rabbitmq/rabbit@${SHORTNAME}.log" ]; then
+    cat "/var/log/rabbitmq/rabbit@${SHORTNAME}.log"
+fi
 
 # Check if the process is running
 if pgrep -f "beam.*rabbit" > /dev/null; then
     echo "✅ RabbitMQ process found"
 else
     echo "❌ RabbitMQ process not found"
-    echo "🔍 Checking startup log:"
-    cat /var/log/rabbitmq/startup.log
     
-    echo "🔍 Checking Erlang compatibility:"
+    echo "🔍 Checking system limits:"
+    ulimit -a
+    
+    echo "🔍 Checking system resources:"
+    free -m
+    df -h
+    
+    echo "🔍 Checking Erlang installation:"
+    which erl
     erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell
     
-    echo "🔍 Checking RabbitMQ server script:"
-    ls -l /opt/rabbitmq/sbin/rabbitmq-server
-    head -n 5 /opt/rabbitmq/sbin/rabbitmq-server
+    echo "🔍 Checking RabbitMQ installation:"
+    ls -l /opt/rabbitmq/sbin/
+    ls -l /usr/local/bin/rabbitmq*
     
-    echo "🔍 Checking environment:"
-    env | grep -E "RABBITMQ|ERLANG"
-    
-    echo "🔍 Checking directory permissions:"
-    ls -la /var/lib/rabbitmq/
-    ls -la /var/log/rabbitmq/
-    ls -la /etc/rabbitmq/
+    echo "🔍 Checking configuration:"
+    cat /etc/rabbitmq/rabbitmq.conf
+    cat /etc/rabbitmq/rabbitmq-env.conf
     
     exit 1
 fi
