@@ -281,7 +281,7 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "�� Verifying RabbitMQ installation..."
+echo "🔄 Verifying RabbitMQ installation..."
 ls -l /opt/rabbitmq/sbin/rabbitmq-server
 ls -l /usr/local/bin/rabbitmq-server
 file /opt/rabbitmq/sbin/rabbitmq-server
@@ -362,7 +362,8 @@ echo "RabbitMQ user home: $(eval echo ~rabbitmq)"
 echo "🚀 Starting RabbitMQ service..."
 
 # Create a temporary environment file with explicit exports
-cat << EOF > /tmp/rabbitmq-env
+TEMP_ENV_FILE=$(mktemp)
+cat << EOF > $TEMP_ENV_FILE
 export HOME=/var/lib/rabbitmq
 export RABBITMQ_HOME=/opt/rabbitmq
 export RABBITMQ_NODENAME="${NODE_NAME}"
@@ -380,25 +381,29 @@ export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 EOF
 
-sudo chown rabbitmq:rabbitmq /tmp/rabbitmq-env
-sudo chmod 644 /tmp/rabbitmq-env
+# Set proper permissions
+sudo chown rabbitmq:rabbitmq $TEMP_ENV_FILE
+sudo chmod 644 $TEMP_ENV_FILE
 
 # Start RabbitMQ with explicit environment
-sudo -u rabbitmq bash -c '
+sudo -u rabbitmq bash -c "
     set -x  # Enable debug output
     set -a  # Automatically export all variables
-    source /tmp/rabbitmq-env
+    source $TEMP_ENV_FILE
     set +a
     
-    echo "Starting server with environment:"
+    echo 'Starting server with environment:'
     env | grep RABBIT
     
     cd /var/lib/rabbitmq
     
     # Start server directly (not detached) to see output
-    echo "Starting RabbitMQ server..."
+    echo 'Starting RabbitMQ server...'
     exec /opt/rabbitmq/sbin/rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1
-' &
+" &
+
+# Clean up temp file after starting
+rm -f $TEMP_ENV_FILE
 
 # Wait for server to start
 echo "🔄 Waiting for RabbitMQ to start..."
