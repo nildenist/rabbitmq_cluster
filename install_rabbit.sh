@@ -37,83 +37,30 @@ echo "📌 Node IP: $NODE_IP"
 sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 
 # Erlang Kurulumu
-echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
+echo "🔄 Installing Erlang from repository..."
+# Add Erlang Solutions repository
+wget -O- https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo apt-key add -
+echo "deb https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
 
-# Before downloading Erlang
-echo "🔄 Installing Erlang build dependencies..."
-sudo apt-get update && sudo apt-get install -y \
-    build-essential \
-    libncurses-dev \
-    libssl-dev \
-    libgmp-dev \
-    libsctp-dev \
-    || {
-        echo "❌ Failed to install Erlang build dependencies"
-        exit 1
-    }
-
-# First try the official download URL
-echo "🔄 Downloading Erlang from official source..."
-ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
-
-if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
-    echo "⚠️ Failed to download from GitHub, trying alternative source..."
-    # Try alternative download URL
-    ERLANG_DOWNLOAD_URL="https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
-    if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
-        echo "❌ Failed to download Erlang source from both sources"
-        echo "Attempted URLs:"
-        echo "1. https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
-        echo "2. https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
-        exit 1
-    fi
-fi
-
-echo "✅ Successfully downloaded Erlang source"
-
-# Extract and get the actual directory name
-tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
-    echo "❌ Failed to extract Erlang source"
+# Update and install Erlang
+sudo apt-get update
+sudo apt-get install -y erlang-base \
+    erlang-asn1 \
+    erlang-crypto \
+    erlang-public-key \
+    erlang-ssl \
+    erlang-syntax-tools \
+    erlang-mnesia \
+    erlang-runtime-tools \
+    erlang-snmp \
+    erlang-os-mon \
+    erlang-parsetools \
+    erlang-inets \
+    erlang-tools \
+    erlang-xmerl || {
+    echo "❌ Failed to install Erlang packages"
     exit 1
 }
-
-# Find the extracted directory name (exclude .tar.gz files)
-ERLANG_SRC_DIR=$(find . -maxdepth 1 -type d \( -name "otp-OTP-${ERLANG_VERSION}*" -o -name "otp_src_${ERLANG_VERSION}*" \) ! -name "*.tar.gz" | head -n 1)
-if [ -z "$ERLANG_SRC_DIR" ]; then
-    # List directories to debug
-    echo "🔍 Looking for Erlang directory. Found directories:"
-    ls -la
-    echo "❌ Could not find extracted Erlang directory"
-    exit 1
-fi
-
-echo "🔄 Building Erlang in directory: $ERLANG_SRC_DIR"
-cd "$ERLANG_SRC_DIR" || {
-    echo "❌ Failed to change to Erlang source directory"
-    exit 1
-}
-
-# Configure without wxWidgets and JavaC
-./configure --prefix=/usr/local --without-wx --without-javac || {
-    echo "❌ Erlang configure failed"
-    exit 1
-}
-
-echo "🔄 Compiling Erlang (this may take a while)..."
-make -j$(nproc) || {
-    echo "❌ Erlang compilation failed"
-    exit 1
-}
-
-echo "🔄 Installing Erlang..."
-sudo make install || {
-    echo "❌ Erlang installation failed"
-    exit 1
-}
-
-cd ..
-rm -rf "$ERLANG_SRC_DIR"
-rm -f otp_src_$ERLANG_VERSION.tar.gz
 
 # Verify Erlang installation
 erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
