@@ -175,10 +175,33 @@ sudo mkdir -p /etc/rabbitmq
 SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
 sudo hostnamectl set-hostname $SHORTNAME
 
-# Update hosts file for the current machine (remove old entries first)
+# Update hosts file with all cluster nodes
+echo "🔄 Configuring hosts file for cluster communication..."
+# First remove any existing entries for our nodes
 sudo sed -i "/$SHORTNAME/d" /etc/hosts
+sudo sed -i "/master-node/d" /etc/hosts
+sudo sed -i "/worker1/d" /etc/hosts
+sudo sed -i "/worker2/d" /etc/hosts
+
+# Add localhost entry for current node
 echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
 echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
+
+# Add all cluster nodes to hosts file
+if [ "$NODE_TYPE" == "master" ]; then
+    # Master needs to know about all workers
+    echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
+    echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+    echo "✅ Added worker nodes to hosts file"
+else
+    # Workers need to know about master
+    echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
+    echo "✅ Added master node to hosts file"
+fi
+
+# Verify hosts file
+echo "🔄 Verifying hosts file configuration:"
+cat /etc/hosts
 
 # Create RabbitMQ user if not exists
 sudo useradd -r -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
@@ -230,12 +253,23 @@ NODE_PORT=$RABBITMQ_PORT
 RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 EOF
 
-# Create basic RabbitMQ config
+# Create more detailed RabbitMQ config
 cat << EOF | sudo tee /etc/rabbitmq/rabbitmq.conf
 listeners.tcp.default = $RABBITMQ_PORT
 management.tcp.port = $RABBITMQ_MANAGEMENT_PORT
 management.tcp.ip = 0.0.0.0
 loopback_users = none
+
+# Logging configuration
+log.file = true
+log.file.level = info
+log.file.rotation.date = \$D0
+log.file.rotation.size = 10485760
+log.file.rotation.count = 10
+
+# Networking
+listeners.tcp.local = 127.0.0.1:$RABBITMQ_PORT
+listeners.tcp.external = $NODE_IP:$RABBITMQ_PORT
 EOF
 
 # Add this before starting RabbitMQ
@@ -260,43 +294,77 @@ for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRE
     fi
 done
 
-# Start RabbitMQ service with proper environment
-echo "🚀 RabbitMQ servisi başlatılıyor..."
-export RABBITMQ_NODENAME=$NODE_NAME
-export RABBITMQ_NODE_IP_ADDRESS=$NODE_IP
-export RABBITMQ_NODE_PORT=$RABBITMQ_PORT
+# Before starting RabbitMQ service
+echo "🔄 Preparing RabbitMQ environment..."
 
-sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq \
-    RABBITMQ_NODENAME=$NODE_NAME \
-    RABBITMQ_NODE_IP_ADDRESS=$NODE_IP \
-    RABBITMQ_NODE_PORT=$RABBITMQ_PORT \
-    RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq \
+# Ensure log directory exists with proper permissions
+sudo mkdir -p /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chmod 755 /var/log/rabbitmq
+
+# Create empty log file with proper permissions
+sudo touch /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+sudo chown rabbitmq:rabbitmq /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+sudo chmod 644 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+
+# Debug information
+echo "🔄 Directory permissions:"
+ls -la /var/log/rabbitmq/
+ls -la /var/lib/rabbitmq/
+ls -la /etc/rabbitmq/
+ls -la /opt/rabbitmq/
+
+echo "🔄 Environment variables:"
+echo "RABBITMQ_NODENAME=$NODE_NAME"
+echo "RABBITMQ_HOME=/opt/rabbitmq"
+echo "RABBITMQ_LOG_BASE=/var/log/rabbitmq"
+echo "Current user: $(whoami)"
+echo "RabbitMQ user home: $(eval echo ~rabbitmq)"
+
+# Start RabbitMQ with more verbose output
+echo "🚀 Starting RabbitMQ service..."
+sudo -u rabbitmq bash -c '
+    export HOME=/var/lib/rabbitmq
+    export RABBITMQ_HOME=/opt/rabbitmq
+    export RABBITMQ_NODENAME='"$NODE_NAME"'
+    export RABBITMQ_NODE_IP_ADDRESS='"$NODE_IP"'
+    export RABBITMQ_NODE_PORT='"$RABBITMQ_PORT"'
+    export RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+    export RABBITMQ_LOG_BASE=/var/log/rabbitmq
+    export RABBITMQ_CONSOLE_LOG=new
+    export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@'"${SHORTNAME}"'.log
+    
+    echo "Starting server with environment:"
+    env | grep RABBIT
+    
     rabbitmq-server -detached
-
-# Wait for service to start with more detailed output
-echo "🔄 Waiting for RabbitMQ to start..."
-for i in {1..30}; do
-    if sudo rabbitmqctl -n $NODE_NAME status >/dev/null 2>&1; then
-        echo "✅ RabbitMQ service started successfully"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "❌ RabbitMQ failed to start after 60 seconds"
-        echo "🔍 Last few lines of the log:"
-        sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-        exit 1
-    fi
-    echo "⏳ Still waiting... ($i/30)"
-    sleep 2
-done
-
-# Verify the service is running
-echo "🔄 Verifying RabbitMQ service..."
-if ! sudo rabbitmqctl status --node $NODE_NAME; then
-    echo "❌ RabbitMQ service failed to start"
-    echo "🔍 Checking logs..."
-    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+' || {
+    echo "❌ Failed to start RabbitMQ server"
     exit 1
+}
+
+# Wait a moment for the log file to be created
+sleep 5
+
+# Check if the server process is running
+echo "🔄 Checking RabbitMQ process..."
+if pgrep -f "beam.*rabbit"; then
+    echo "✅ RabbitMQ process is running"
+else
+    echo "❌ No RabbitMQ process found"
+fi
+
+# Check EPMD (Erlang Port Mapper Daemon)
+echo "🔄 Checking EPMD status..."
+epmd -names
+
+# Check log file
+echo "🔄 Checking log file..."
+if [ -f "/var/log/rabbitmq/rabbit@${SHORTNAME}.log" ]; then
+    echo "✅ Log file exists"
+    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+else
+    echo "❌ Log file does not exist"
 fi
 
 # Enable management plugin
