@@ -281,19 +281,28 @@ distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
-echo "🔄 Verifying RabbitMQ installation..."
-if [ ! -f "/opt/rabbitmq/sbin/rabbitmq-server" ]; then
-    echo "❌ RabbitMQ server binary not found"
-    exit 1
-fi
-
-# Check if all required files exist
-for file in rabbitmqctl rabbitmq-server rabbitmq-env rabbitmq-plugins; do
-    if [ ! -f "/usr/local/bin/$file" ]; then
-        echo "❌ Missing symlink: $file"
+echo "�� Verifying RabbitMQ files..."
+for dir in /opt/rabbitmq/sbin /opt/rabbitmq/etc /opt/rabbitmq/plugins; do
+    if [ ! -d "$dir" ]; then
+        echo "❌ Missing directory: $dir"
         exit 1
     fi
 done
+
+for file in rabbitmq-server rabbitmqctl rabbitmq-plugins rabbitmq-env; do
+    if [ ! -f "/opt/rabbitmq/sbin/$file" ]; then
+        echo "❌ Missing file: /opt/rabbitmq/sbin/$file"
+        exit 1
+    fi
+    if [ ! -x "/opt/rabbitmq/sbin/$file" ]; then
+        echo "❌ File not executable: /opt/rabbitmq/sbin/$file"
+        sudo chmod +x "/opt/rabbitmq/sbin/$file"
+    fi
+done
+
+# Test rabbitmq-env script
+echo "🔄 Testing rabbitmq-env script..."
+/opt/rabbitmq/sbin/rabbitmq-env
 
 # Verify RabbitMQ version
 echo "🔄 Checking RabbitMQ version..."
@@ -372,74 +381,42 @@ sudo -u rabbitmq bash -c '
     export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@'"${SHORTNAME}"'.pid
     export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
     export RABBITMQ_SERVER_START_ARGS="-detached"
+    export PATH=$PATH:/opt/rabbitmq/sbin
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
-    # Start server with debug output
-    echo "Starting RabbitMQ server..."
-    rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1 &
-    SERVER_PID=$!
-    
-    # Wait and check process
-    sleep 5
-    if kill -0 $SERVER_PID 2>/dev/null; then
-        echo "Server started successfully with PID: $SERVER_PID"
-        disown $SERVER_PID
-    else
-        echo "Server failed to start. Showing startup log:"
-        cat /var/log/rabbitmq/startup.log
-        exit 1
-    fi
+    # Try to start the server directly (not detached) to see errors
+    cd /var/lib/rabbitmq
+    exec rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1
 '
 
-# Check startup log immediately
-echo "🔄 Checking startup log..."
-if [ -f /var/log/rabbitmq/startup.log ]; then
-    echo "Startup log contents:"
+# Wait a moment
+sleep 5
+
+# Check if the process is running
+if pgrep -f "beam.*rabbit" > /dev/null; then
+    echo "✅ RabbitMQ process found"
+else
+    echo "❌ RabbitMQ process not found"
+    echo "🔍 Checking startup log:"
     cat /var/log/rabbitmq/startup.log
-    echo "System log contents:"
-    sudo journalctl -u rabbitmq-server --no-pager -n 50
-    echo "EPMD status:"
-    epmd -names
-    echo "Process status:"
-    ps aux | grep rabbit
-    echo "Directory permissions:"
-    ls -la /var/lib/rabbitmq/mnesia/
+    
+    echo "🔍 Checking Erlang compatibility:"
+    erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell
+    
+    echo "🔍 Checking RabbitMQ server script:"
+    ls -l /opt/rabbitmq/sbin/rabbitmq-server
+    head -n 5 /opt/rabbitmq/sbin/rabbitmq-server
+    
+    echo "🔍 Checking environment:"
+    env | grep -E "RABBITMQ|ERLANG"
+    
+    echo "🔍 Checking directory permissions:"
+    ls -la /var/lib/rabbitmq/
     ls -la /var/log/rabbitmq/
     ls -la /etc/rabbitmq/
-else
-    echo "❌ No startup log found"
-fi
-
-# Wait for RabbitMQ to fully start
-echo "🔄 Waiting for RabbitMQ to start..."
-MAX_ATTEMPTS=30
-ATTEMPT=0
-while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-    # First check if process is running
-    if pgrep -f "beam.*rabbit" > /dev/null; then
-        echo "✅ RabbitMQ process is running"
-        # Then check if it's responding to commands
-        if sudo rabbitmqctl status >/dev/null 2>&1; then
-            echo "✅ RabbitMQ is fully started and responding"
-            break
-        fi
-    fi
-    ATTEMPT=$((ATTEMPT+1))
-    echo "⏳ Still waiting... ($ATTEMPT/$MAX_ATTEMPTS)"
-    sleep 2
-done
-
-if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-    echo "❌ RabbitMQ failed to start properly"
-    echo "🔍 Process status:"
-    ps aux | grep rabbit
-    echo "🔍 Log contents:"
-    sudo tail -n 50 /var/log/rabbitmq/startup.log
-    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-    echo "🔍 EPMD status:"
-    epmd -names
+    
     exit 1
 fi
 
