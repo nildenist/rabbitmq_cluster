@@ -39,6 +39,25 @@ sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 # Erlang Kurulumu
 echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
+# First try the official download URL
+echo "🔄 Downloading Erlang from official source..."
+ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
+
+if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
+    echo "⚠️ Failed to download from GitHub, trying alternative source..."
+    # Try alternative download URL
+    ERLANG_DOWNLOAD_URL="https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
+    if ! wget -q "$ERLANG_DOWNLOAD_URL" -O otp_src_$ERLANG_VERSION.tar.gz; then
+        echo "❌ Failed to download Erlang source from both sources"
+        echo "Attempted URLs:"
+        echo "1. https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
+        echo "2. https://erlang.org/download/otp_src_${ERLANG_VERSION}.tar.gz"
+        exit 1
+    fi
+fi
+
+echo "✅ Successfully downloaded Erlang source"
+
 # Install build dependencies
 echo "🔄 Installing build dependencies..."
 sudo apt-get update && sudo apt-get install -y \
