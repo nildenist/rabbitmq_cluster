@@ -39,9 +39,15 @@ sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 # Erlang Kurulumu
 echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
 
+# Remove Erlang Solutions repository if exists
+echo "🔄 Cleaning up package sources..."
+sudo rm -f /etc/apt/sources.list.d/erlang*
+sudo rm -f /etc/apt/sources.list.d/rabbitmq*
+sudo apt-get update
+
 # Install build dependencies
 echo "🔄 Installing build dependencies..."
-sudo apt-get update && sudo apt-get install -y \
+sudo apt-get install -y \
     build-essential \
     autoconf \
     m4 \
