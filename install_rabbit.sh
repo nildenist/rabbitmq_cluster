@@ -177,6 +177,29 @@ sudo hostnamectl set-hostname $SHORTNAME
 
 # Update hosts file for the current machine
 echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
+echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
+
+# Create RabbitMQ user if not exists
+sudo useradd -r -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
+
+# Set up directories and permissions
+sudo mkdir -p /var/lib/rabbitmq/mnesia
+sudo mkdir -p /var/log/rabbitmq
+sudo mkdir -p /etc/rabbitmq
+
+# Set the Erlang cookie before anything else
+echo "🔄 RabbitMQ Cluster Cookie Ayarlanıyor..."
+echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie
+echo "$RABBITMQ_COOKIE" | sudo tee /root/.erlang.cookie
+sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
+sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
+sudo chmod 400 /root/.erlang.cookie
+
+# Set proper permissions
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
 
 # Configure RabbitMQ environment
 cat << EOF | sudo tee /etc/rabbitmq/rabbitmq-env.conf
@@ -186,30 +209,37 @@ NODE_PORT=$RABBITMQ_PORT
 RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 EOF
 
-# Set RabbitMQ environment for the rabbitmq user
-sudo mkdir -p /var/lib/rabbitmq/mnesia
-sudo mkdir -p /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
-
-# Set the Erlang cookie before starting the service
-echo "🔄 RabbitMQ Cluster Cookie Ayarlanıyor..."
-echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie
-sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
-sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
+# Stop any existing RabbitMQ process
+sudo pkill -f rabbitmq || true
+sleep 5
 
 # Start RabbitMQ service with proper environment
 echo "🚀 RabbitMQ servisi başlatılıyor..."
-sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq RABBITMQ_NODENAME=$NODE_NAME rabbitmq-server -detached
-sleep 10  # Give more time for the service to start properly
+sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq \
+    RABBITMQ_NODENAME=$NODE_NAME \
+    RABBITMQ_NODE_IP_ADDRESS=$NODE_IP \
+    RABBITMQ_NODE_PORT=$RABBITMQ_PORT \
+    rabbitmq-server -detached
+
+# Wait for service to start
+echo "🔄 Waiting for RabbitMQ to start..."
+for i in {1..30}; do
+    if sudo rabbitmqctl status --node $NODE_NAME >/dev/null 2>&1; then
+        echo "✅ RabbitMQ service started successfully"
+        break
+    fi
+    echo "⏳ Still waiting... ($i/30)"
+    sleep 2
+done
 
 # Verify the service is running
 echo "🔄 Verifying RabbitMQ service..."
-sudo rabbitmqctl status || {
+if ! sudo rabbitmqctl status --node $NODE_NAME; then
     echo "❌ RabbitMQ service failed to start"
+    echo "🔍 Checking logs..."
+    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
     exit 1
-}
+fi
 
 # Enable management plugin
 echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
@@ -281,4 +311,15 @@ if ! grep -q "$WORKER_1_IP.*worker1" /etc/hosts; then
 fi
 if ! grep -q "$WORKER_2_IP.*worker2" /etc/hosts; then
     echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+fi
+
+# Add after setting the cookie
+echo "🔄 Verifying cookie files..."
+if [ "$(sudo cat /var/lib/rabbitmq/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
+    echo "❌ Cookie mismatch in /var/lib/rabbitmq/.erlang.cookie"
+    exit 1
+fi
+if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
+    echo "❌ Cookie mismatch in /root/.erlang.cookie"
+    exit 1
 fi
