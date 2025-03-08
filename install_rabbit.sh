@@ -262,7 +262,7 @@ loopback_users = none
 
 # Logging configuration
 log.file = true
-log.file.level = info
+log.file.level = debug
 log.file.rotation.date = \$D0
 log.file.rotation.size = 10485760
 log.file.rotation.count = 10
@@ -270,6 +270,14 @@ log.file.rotation.count = 10
 # Networking
 listeners.tcp.local = 127.0.0.1:$RABBITMQ_PORT
 listeners.tcp.external = $NODE_IP:$RABBITMQ_PORT
+
+# Clustering
+cluster_formation.peer_discovery_backend = rabbit_peer_discovery_classic_config
+cluster_formation.classic_config.nodes.$NODE_TYPE = rabbit@$SHORTNAME
+
+# Distribution
+distribution.port_range.min = 25672
+distribution.port_range.max = 25672
 EOF
 
 # Add this before starting RabbitMQ
@@ -333,46 +341,72 @@ sudo -u rabbitmq bash -c '
     export RABBITMQ_LOG_BASE=/var/log/rabbitmq
     export RABBITMQ_CONSOLE_LOG=new
     export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@'"${SHORTNAME}"'.log
+    export RABBITMQ_DIST_PORT=25672
     
     echo "Starting server with environment:"
     env | grep RABBIT
     
     rabbitmq-server -detached
-' || {
-    echo "❌ Failed to start RabbitMQ server"
+'
+
+# Wait for RabbitMQ to fully start
+echo "🔄 Waiting for RabbitMQ to start..."
+MAX_ATTEMPTS=30
+ATTEMPT=0
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    if sudo rabbitmqctl wait --timeout 5 /var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid; then
+        echo "✅ RabbitMQ is fully started"
+        break
+    fi
+    ATTEMPT=$((ATTEMPT+1))
+    echo "⏳ Still waiting... ($ATTEMPT/$MAX_ATTEMPTS)"
+    sleep 2
+done
+
+if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+    echo "❌ RabbitMQ failed to start properly"
+    echo "🔍 Last 50 lines of log:"
+    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
+    exit 1
+fi
+
+# Verify node is running
+echo "🔄 Verifying RabbitMQ node status..."
+sudo rabbitmqctl status || {
+    echo "❌ RabbitMQ node is not running"
     exit 1
 }
 
-# Wait a moment for the log file to be created
-sleep 5
-
-# Check if the server process is running
-echo "🔄 Checking RabbitMQ process..."
-if pgrep -f "beam.*rabbit"; then
-    echo "✅ RabbitMQ process is running"
-else
-    echo "❌ No RabbitMQ process found"
-fi
-
-# Check EPMD (Erlang Port Mapper Daemon)
-echo "🔄 Checking EPMD status..."
-epmd -names
-
-# Check log file
-echo "🔄 Checking log file..."
-if [ -f "/var/log/rabbitmq/rabbit@${SHORTNAME}.log" ]; then
-    echo "✅ Log file exists"
-    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-else
-    echo "❌ Log file does not exist"
-fi
-
 # Enable management plugin
 echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
-sudo rabbitmqctl -n $NODE_NAME stop_app
-sudo rabbitmqctl -n $NODE_NAME reset
-sudo rabbitmqctl -n $NODE_NAME start_app
-sudo rabbitmq-plugins -n $NODE_NAME enable rabbitmq_management
+sudo rabbitmqctl -n $NODE_NAME wait --timeout 60 || {
+    echo "❌ Failed to wait for RabbitMQ node"
+    exit 1
+}
+
+sudo rabbitmqctl -n $NODE_NAME stop_app || {
+    echo "❌ Failed to stop RabbitMQ app"
+    exit 1
+}
+
+sudo rabbitmqctl -n $NODE_NAME reset || {
+    echo "❌ Failed to reset RabbitMQ"
+    exit 1
+}
+
+sudo rabbitmqctl -n $NODE_NAME start_app || {
+    echo "❌ Failed to start RabbitMQ app"
+    exit 1
+}
+
+sudo rabbitmq-plugins -n $NODE_NAME enable rabbitmq_management || {
+    echo "❌ Failed to enable management plugin"
+    exit 1
+}
+
+# Verify the plugin is enabled
+echo "🔄 Verifying management plugin..."
+sudo rabbitmq-plugins list | grep rabbitmq_management
 
 # Restart service to apply changes
 echo "🔄 Restarting RabbitMQ service..."
