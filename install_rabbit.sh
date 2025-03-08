@@ -57,24 +57,14 @@ sudo apt-get install -y build-essential || {
 
 echo "🔄 Installing Erlang/OTP dependencies..."
 sudo apt-get install -y \
-    libncurses5-dev \
+    libncurses-dev \
     libssl-dev \
     unixodbc-dev \
     libgmp-dev \
-    libwxbase3.0-dev \
-    libwxgtk3.0-gtk3-dev \
     libsctp-dev \
     || {
-        echo "❌ Failed to install Erlang dependencies"
-        echo "🔄 Trying alternative package names..."
-        # Try alternative package names for different Ubuntu/Debian versions
-        sudo apt-get install -y \
-            libncurses-dev \
-            libwxgtk-webview3.0-gtk3-dev \
-            || {
-                echo "❌ Failed to install alternative packages"
-                exit 1
-            }
+        echo "❌ Failed to install core Erlang dependencies"
+        exit 1
     }
 
 # Optional documentation tools - don't exit if these fail
@@ -96,7 +86,8 @@ tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
 }
 
 cd otp_src_$ERLANG_VERSION
-./configure --prefix=/usr/local --without-javac || {
+# Configure without wxWidgets and JavaC
+./configure --prefix=/usr/local --without-wx --without-javac || {
     echo "❌ Erlang configure failed"
     exit 1
 }
