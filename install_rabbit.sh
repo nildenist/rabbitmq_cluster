@@ -58,12 +58,25 @@ fi
 
 echo "✅ Successfully downloaded Erlang source"
 
+# Extract and get the actual directory name
 tar -xzf otp_src_$ERLANG_VERSION.tar.gz || {
     echo "❌ Failed to extract Erlang source"
     exit 1
 }
 
-cd otp_src_$ERLANG_VERSION
+# Find the extracted directory name
+ERLANG_SRC_DIR=$(find . -maxdepth 1 -type d -name "otp-OTP-${ERLANG_VERSION}*" -o -name "otp_src_${ERLANG_VERSION}*" | head -n 1)
+if [ -z "$ERLANG_SRC_DIR" ]; then
+    echo "❌ Could not find extracted Erlang directory"
+    exit 1
+fi
+
+echo "🔄 Building Erlang in directory: $ERLANG_SRC_DIR"
+cd "$ERLANG_SRC_DIR" || {
+    echo "❌ Failed to change to Erlang source directory"
+    exit 1
+}
+
 # Configure without wxWidgets and JavaC
 ./configure --prefix=/usr/local --without-wx --without-javac || {
     echo "❌ Erlang configure failed"
@@ -83,7 +96,8 @@ sudo make install || {
 }
 
 cd ..
-rm -rf otp_src_$ERLANG_VERSION*
+rm -rf "$ERLANG_SRC_DIR"
+rm -f otp_src_$ERLANG_VERSION.tar.gz
 
 # Verify Erlang installation
 erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
