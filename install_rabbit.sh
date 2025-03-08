@@ -41,16 +41,27 @@ echo "🔄 Installing Erlang..."
 sudo apt-get update
 sudo apt-get install -y wget gnupg
 
-# Add the Erlang repository
+# Add the Erlang repository (using jammy instead of noble)
 curl -fsSL https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo gpg --dearmor -o /usr/share/keyrings/erlang.gpg
-echo "deb [signed-by=/usr/share/keyrings/erlang.gpg] https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
+echo "deb [signed-by=/usr/share/keyrings/erlang.gpg] https://packages.erlang-solutions.com/ubuntu jammy contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
 
 # Update and install Erlang
-sudo apt-get update
-sudo apt-get install -y erlang-nox || {
-    echo "❌ Failed to install Erlang"
-    exit 1
+sudo apt-get update || {
+    echo "⚠️ Repository update failed, trying alternative approach..."
+    # If update fails, try installing from Ubuntu's default repository
+    sudo apt-get install -y erlang || {
+        echo "❌ Failed to install Erlang"
+        exit 1
+    }
 }
+
+# Try to install erlang-nox if the repository update succeeded
+if [ $? -eq 0 ]; then
+    sudo apt-get install -y erlang-nox || {
+        echo "❌ Failed to install Erlang"
+        exit 1
+    }
+fi
 
 # Verify Erlang installation
 erl -eval 'erlang:display(erlang:system_info(version)), halt().' -noshell || {
