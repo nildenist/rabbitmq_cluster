@@ -164,26 +164,21 @@ rm -f rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
 # Set environment variables
 echo "🔄 Setting up RabbitMQ environment..."
 sudo mkdir -p /etc/rabbitmq
+
+# Set the hostname to match the node name
+SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
+sudo hostnamectl set-hostname $SHORTNAME
+
+# Update hosts file for the current machine
+echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
+
+# Configure RabbitMQ environment
 cat << EOF | sudo tee /etc/rabbitmq/rabbitmq-env.conf
 NODENAME=$NODE_NAME
 NODE_IP_ADDRESS=$NODE_IP
 NODE_PORT=$RABBITMQ_PORT
 RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 EOF
-
-# Ensure proper permissions
-sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
-sudo chmod -R 755 /opt/rabbitmq
-
-# RabbitMQ Kullanıcısını Ayarla
-sudo useradd --system --no-create-home --shell /bin/false rabbitmq || true
-sudo mkdir -p /var/lib/rabbitmq /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq /var/log/rabbitmq
-
-# RabbitMQ Node İsmini Ayarla
-echo "🔄 RabbitMQ Node İsmi Ayarlanıyor: $NODE_NAME"
-sudo mkdir -p /etc/rabbitmq
-echo "NODENAME=$NODE_NAME" | sudo tee /etc/rabbitmq/rabbitmq-env.conf
 
 # Set RabbitMQ environment for the rabbitmq user
 sudo mkdir -p /var/lib/rabbitmq/mnesia
@@ -192,27 +187,37 @@ sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
 
-# Start RabbitMQ service with proper environment
-echo "🚀 RabbitMQ servisi başlatılıyor..."
-sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq rabbitmq-server -detached
-sleep 10  # Give more time for the service to start properly
-
-# RabbitMQ Management Plugin Aç
-echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
-sudo rabbitmq-plugins enable rabbitmq_management
-
-# Cluster İçin Cookie Ayarı
+# Set the Erlang cookie before starting the service
 echo "🔄 RabbitMQ Cluster Cookie Ayarlanıyor..."
 echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie
 sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
 sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
 
-# Restart RabbitMQ to apply cookie changes
+# Start RabbitMQ service with proper environment
+echo "🚀 RabbitMQ servisi başlatılıyor..."
+sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq RABBITMQ_NODENAME=$NODE_NAME rabbitmq-server -detached
+sleep 10  # Give more time for the service to start properly
+
+# Verify the service is running
+echo "🔄 Verifying RabbitMQ service..."
+sudo rabbitmqctl status || {
+    echo "❌ RabbitMQ service failed to start"
+    exit 1
+}
+
+# Enable management plugin
+echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
+sudo rabbitmqctl -n $NODE_NAME stop_app
+sudo rabbitmqctl -n $NODE_NAME reset
+sudo rabbitmqctl -n $NODE_NAME start_app
+sudo rabbitmq-plugins -n $NODE_NAME enable rabbitmq_management
+
+# Restart service to apply changes
 echo "🔄 Restarting RabbitMQ service..."
-sudo rabbitmqctl stop
+sudo rabbitmqctl -n $NODE_NAME stop
 sleep 5
-sudo -u rabbitmq rabbitmq-server -detached
-sleep 5
+sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq RABBITMQ_NODENAME=$NODE_NAME rabbitmq-server -detached
+sleep 10
 
 # Check connectivity to master
 echo "🔄 Checking connectivity to master node..."
