@@ -643,3 +643,51 @@ if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     echo "❌ Cookie mismatch in /root/.erlang.cookie"
     exit 1
 fi
+
+# After creating the systemd service and before starting it, add:
+
+echo "🔄 Creating RabbitMQ configuration files..."
+
+# Create rabbitmq.conf with proper configuration
+sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+listeners.tcp.default = ${RABBITMQ_PORT}
+management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
+management.tcp.ip = 0.0.0.0
+
+# Networking
+listeners.tcp.local = 127.0.0.1:${RABBITMQ_PORT}
+listeners.tcp.external = ${NODE_IP}:${RABBITMQ_PORT}
+
+# Clustering
+cluster_formation.peer_discovery_backend = rabbit_peer_discovery_classic_config
+cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
+
+# Distribution
+distribution.port_range.min = 25672
+distribution.port_range.max = 25672
+
+# Logging
+log.file.level = info
+EOF
+
+# Create rabbitmq-env.conf with proper environment settings
+sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
+NODENAME=${NODE_NAME}
+NODE_IP_ADDRESS=${NODE_IP}
+NODE_PORT=${RABBITMQ_PORT}
+RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+RABBITMQ_LOG_BASE=/var/log/rabbitmq
+EOF
+
+# Set proper permissions
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chmod 644 /etc/rabbitmq/rabbitmq.conf
+sudo chmod 644 /etc/rabbitmq/rabbitmq-env.conf
+
+# Clean any existing state before starting
+sudo rm -rf /var/lib/rabbitmq/mnesia/*
+sudo rm -f /var/log/rabbitmq/*.log
+sudo rm -f erl_crash.dump
+
+# Reload systemd and start service
+sudo systemctl daemon-reload
