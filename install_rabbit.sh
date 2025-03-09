@@ -26,6 +26,57 @@ else
     exit 1
 fi
 
+# Add this section after the NODE_TYPE check and before starting the installation
+
+# Prompt for RabbitMQ admin credentials if not already set
+if [ -z "$RABBITMQ_ADMIN_USER" ] || [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
+    echo "🔄 Please enter RabbitMQ admin credentials:"
+    
+    # Keep asking until we get a valid username
+    while true; do
+        read -p "Admin Username (minimum 4 characters): " RABBITMQ_ADMIN_USER
+        if [ ${#RABBITMQ_ADMIN_USER} -ge 4 ]; then
+            break
+        else
+            echo "❌ Username must be at least 4 characters long"
+        fi
+    done
+    
+    # Keep asking until we get a valid password
+    while true; do
+        read -s -p "Admin Password (minimum 8 characters): " RABBITMQ_ADMIN_PASSWORD
+        echo
+        if [ ${#RABBITMQ_ADMIN_PASSWORD} -ge 8 ]; then
+            read -s -p "Confirm Password: " RABBITMQ_ADMIN_PASSWORD_CONFIRM
+            echo
+            if [ "$RABBITMQ_ADMIN_PASSWORD" = "$RABBITMQ_ADMIN_PASSWORD_CONFIRM" ]; then
+                break
+            else
+                echo "❌ Passwords do not match"
+            fi
+        else
+            echo "❌ Password must be at least 8 characters long"
+        fi
+    done
+    
+    # Export the variables so they're available throughout the script
+    export RABBITMQ_ADMIN_USER
+    export RABBITMQ_ADMIN_PASSWORD
+    
+    # Save to rabbit.env file if user confirms
+    read -p "Would you like to save these credentials to rabbit.env? (y/N): " SAVE_CREDS
+    if [[ "$SAVE_CREDS" =~ ^[Yy]$ ]]; then
+        # Remove old credentials if they exist
+        sed -i '/RABBITMQ_ADMIN_USER=/d' rabbit.env
+        sed -i '/RABBITMQ_ADMIN_PASSWORD=/d' rabbit.env
+        
+        # Add new credentials
+        echo "RABBITMQ_ADMIN_USER=$RABBITMQ_ADMIN_USER" >> rabbit.env
+        echo "RABBITMQ_ADMIN_PASSWORD=$RABBITMQ_ADMIN_PASSWORD" >> rabbit.env
+        echo "✅ Credentials saved to rabbit.env"
+    fi
+fi
+
 echo "🚀 RabbitMQ ve Erlang Kurulum Başlıyor..."
 echo "📌 Erlang Version: $ERLANG_VERSION"
 echo "📌 RabbitMQ Version: $RABBITMQ_VERSION"
