@@ -576,12 +576,32 @@ sudo rabbitmqctl status || {
 }
 
 # Enable management plugin
-echo "🔄 RabbitMQ Management Plugin Etkinleştiriliyor..."
-sudo rabbitmqctl -n $NODE_NAME wait --timeout 60 || {
+echo "🔄 Enabling RabbitMQ Management Plugin..."
+
+# Wait for PID file to be created
+PID_FILE="/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid"
+for i in $(seq 1 30); do
+    if [ -f "$PID_FILE" ]; then
+        echo "✅ Found PID file: $PID_FILE"
+        break
+    fi
+    echo "⏳ Waiting for PID file... ($i/30)"
+    sleep 1
+done
+
+if [ ! -f "$PID_FILE" ]; then
+    echo "❌ PID file not found after waiting"
+    exit 1
+fi
+
+# Now use the PID file with the wait command
+sudo rabbitmqctl -n $NODE_NAME wait "$PID_FILE" --timeout 60 || {
     echo "❌ Failed to wait for RabbitMQ node"
     exit 1
 }
 
+# Stop and start the app
+echo "🔄 Configuring RabbitMQ plugins..."
 sudo rabbitmqctl -n $NODE_NAME stop_app || {
     echo "❌ Failed to stop RabbitMQ app"
     exit 1
@@ -597,6 +617,7 @@ sudo rabbitmqctl -n $NODE_NAME start_app || {
     exit 1
 }
 
+# Enable the management plugin
 sudo rabbitmq-plugins -n $NODE_NAME enable rabbitmq_management || {
     echo "❌ Failed to enable management plugin"
     exit 1
