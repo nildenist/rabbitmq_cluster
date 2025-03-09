@@ -90,19 +90,19 @@ if [ "$INSTALL_ERLANG" = true ]; then
 
     # Download and extract Erlang source from GitHub
     echo "🔄 Downloading Erlang source..."
-    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
+    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
     wget -q "$ERLANG_DOWNLOAD_URL" || {
         echo "❌ Failed to download Erlang source"
         echo "URL: $ERLANG_DOWNLOAD_URL"
         exit 1
     }
 
-    tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
+    tar xzf OTP-${ERLANG_VERSION}.tar.gz || {
         echo "❌ Failed to extract Erlang source"
         exit 1
     }
 
-    cd otp_src_${ERLANG_VERSION} || {
+    cd otp-OTP-${ERLANG_VERSION} || {
         echo "❌ Failed to change to Erlang directory"
         exit 1
     }
@@ -136,7 +136,7 @@ if [ "$INSTALL_ERLANG" = true ]; then
     }
 
     cd ..
-    rm -rf otp_src_${ERLANG_VERSION}*
+    rm -rf otp-OTP-${ERLANG_VERSION}*
 fi
 
 # Verify Erlang installation
@@ -183,19 +183,19 @@ if ! erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> h
 
     # Download and extract Erlang source
     echo "🔄 Downloading Erlang source..."
-    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
+    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${ERLANG_VERSION}.tar.gz"
     wget -q "$ERLANG_DOWNLOAD_URL" || {
         echo "❌ Failed to download Erlang source"
         echo "URL: $ERLANG_DOWNLOAD_URL"
         exit 1
     }
 
-    tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
+    tar xzf OTP-${ERLANG_VERSION}.tar.gz || {
         echo "❌ Failed to extract Erlang source"
         exit 1
     }
 
-    cd otp_src_${ERLANG_VERSION} || {
+    cd otp-OTP-${ERLANG_VERSION} || {
         echo "❌ Failed to change to Erlang directory"
         exit 1
     }
@@ -224,7 +224,7 @@ if ! erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> h
     }
 
     cd ..
-    rm -rf otp_src_${ERLANG_VERSION}*
+    rm -rf otp-OTP-${ERLANG_VERSION}*
 fi
 
 # Verify crypto module again
