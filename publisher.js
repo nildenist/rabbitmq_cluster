@@ -3,7 +3,7 @@ const amqp = require('amqplib');
 async function publishMessages() {
     try {
         // RabbitMQ'ya bağlan
-        const connection = await amqp.connect('amqp://localhost');
+        const connection = await amqp.connect('amqp://10.128.0.37');
         const channel = await connection.createChannel();
         const queue = 'test_queue';
 
