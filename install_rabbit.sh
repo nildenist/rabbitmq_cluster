@@ -573,6 +573,8 @@ Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
 Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
 Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
+Environment=RABBITMQ_MNESIA_BASE=/opt/rabbitmq/var/lib/rabbitmq/mnesia
+Environment=RABBITMQ_PID_FILE=/opt/rabbitmq/var/lib/rabbitmq/mnesia/\${RABBITMQ_NODENAME}.pid
 Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
 Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=LANG=en_US.UTF-8
@@ -774,3 +776,46 @@ done
 sudo systemctl daemon-reload
 
 echo "✅ RabbitMQ configuration completed"
+
+# Add after creating directories and before starting the service
+echo "🔄 Setting up PID directory..."
+sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq/var/lib/rabbitmq
+sudo chmod 755 /opt/rabbitmq/var/lib/rabbitmq
+sudo chmod 755 /opt/rabbitmq/var/lib/rabbitmq/mnesia
+
+# Also update the systemd service to use the correct PID directory
+cat << EOF | sudo tee /etc/systemd/system/rabbitmq-server.service
+[Unit]
+Description=RabbitMQ Server
+After=network.target epmd@0.0.0.0.socket
+Wants=network.target epmd@0.0.0.0.socket
+
+[Service]
+Type=notify
+User=rabbitmq
+Group=rabbitmq
+Environment=HOME=/home/rabbitmq
+Environment=RABBITMQ_HOME=/opt/rabbitmq
+Environment=RABBITMQ_NODENAME=${NODE_NAME}
+Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
+Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
+Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
+Environment=RABBITMQ_MNESIA_BASE=/opt/rabbitmq/var/lib/rabbitmq/mnesia
+Environment=RABBITMQ_PID_FILE=/opt/rabbitmq/var/lib/rabbitmq/mnesia/\${RABBITMQ_NODENAME}.pid
+Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LANG=en_US.UTF-8
+Environment=LC_ALL=en_US.UTF-8
+
+ExecStart=/opt/rabbitmq/sbin/rabbitmq-server
+ExecStop=/opt/rabbitmq/sbin/rabbitmqctl stop
+Restart=always
+RestartSec=10
+WorkingDirectory=/var/lib/rabbitmq
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
