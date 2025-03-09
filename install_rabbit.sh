@@ -414,11 +414,8 @@ EOF
 if [ "$NODE_TYPE" == "master" ]; then
     # Master node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+# Networking
 listeners.tcp.default = ${RABBITMQ_PORT}
-management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
-
-# Basic networking
-tcp_listeners.1 = ${RABBITMQ_PORT}
 management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.listener.ip = 0.0.0.0
 
@@ -432,10 +429,6 @@ cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${NODE_NAME}
 
-# Distribution ports
-distribution.listener.port_range.min = 25672
-distribution.listener.port_range.max = 25672
-
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
 disk_free_limit.absolute = 2GB
@@ -446,11 +439,8 @@ EOF
 else
     # Worker node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+# Networking
 listeners.tcp.default = ${RABBITMQ_PORT}
-management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
-
-# Basic networking
-tcp_listeners.1 = ${RABBITMQ_PORT}
 management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.listener.ip = 0.0.0.0
 
@@ -463,10 +453,6 @@ log.dir = /var/log/rabbitmq
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
-
-# Distribution ports
-distribution.listener.port_range.min = 25672
-distribution.listener.port_range.max = 25672
 
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
@@ -703,11 +689,8 @@ EOF
 if [ "$NODE_TYPE" == "master" ]; then
     # Master node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+# Networking
 listeners.tcp.default = ${RABBITMQ_PORT}
-management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
-
-# Basic networking
-tcp_listeners.1 = ${RABBITMQ_PORT}
 management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.listener.ip = 0.0.0.0
 
@@ -721,10 +704,6 @@ cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${NODE_NAME}
 
-# Distribution ports
-distribution.listener.port_range.min = 25672
-distribution.listener.port_range.max = 25672
-
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
 disk_free_limit.absolute = 2GB
@@ -735,11 +714,8 @@ EOF
 else
     # Worker node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+# Networking
 listeners.tcp.default = ${RABBITMQ_PORT}
-management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
-
-# Basic networking
-tcp_listeners.1 = ${RABBITMQ_PORT}
 management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.listener.ip = 0.0.0.0
 
@@ -752,10 +728,6 @@ log.dir = /var/log/rabbitmq
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
-
-# Distribution ports
-distribution.listener.port_range.min = 25672
-distribution.listener.port_range.max = 25672
 
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
