@@ -318,14 +318,15 @@ sudo pkill -f rabbitmq || true
 sudo rm -rf /var/lib/rabbitmq/mnesia/*
 sleep 5
 
-# Set the Erlang cookie for all potential locations
+# Before starting RabbitMQ, update the cookie setup section
 echo "🔄 Setting up Erlang cookies..."
-# First, determine the current user's home directory correctly
-CURRENT_USER=$(whoami)
-CURRENT_USER_HOME=$(eval echo ~$CURRENT_USER)
 
-# Set cookies in required locations
-for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRENT_USER_HOME/.erlang.cookie"; do
+# Create rabbitmq home directory if it doesn't exist
+sudo mkdir -p /home/rabbitmq
+sudo chown rabbitmq:rabbitmq /home/rabbitmq
+
+# Set cookies in all required locations
+for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/rabbitmq/.erlang.cookie "$CURRENT_USER_HOME/.erlang.cookie"; do
     # Create directory if it doesn't exist
     sudo mkdir -p "$(dirname $COOKIE_PATH)"
     
@@ -336,6 +337,9 @@ for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRE
     # Set ownership based on location
     if [[ "$COOKIE_PATH" == "/var/lib/rabbitmq/.erlang.cookie" ]]; then
         sudo chown rabbitmq:rabbitmq "$COOKIE_PATH"
+    elif [[ "$COOKIE_PATH" == "/home/rabbitmq/.erlang.cookie" ]]; then
+        sudo chown rabbitmq:rabbitmq "$COOKIE_PATH"
+        sudo chown rabbitmq:rabbitmq /home/rabbitmq
     elif [[ "$COOKIE_PATH" == "$CURRENT_USER_HOME/.erlang.cookie" ]]; then
         sudo chown $CURRENT_USER:$CURRENT_USER "$COOKIE_PATH"
     fi
@@ -478,7 +482,7 @@ echo "🚀 Starting RabbitMQ service..."
 # Create a temporary environment file with explicit exports
 TEMP_ENV_FILE=$(mktemp)
 cat << EOF > $TEMP_ENV_FILE
-export HOME=/var/lib/rabbitmq
+export HOME=/home/rabbitmq
 export RABBITMQ_HOME=/opt/rabbitmq
 export RABBITMQ_NODENAME="${NODE_NAME}"
 export RABBITMQ_NODE_IP_ADDRESS="${NODE_IP}"
