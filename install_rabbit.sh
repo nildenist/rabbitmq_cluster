@@ -34,7 +34,7 @@ echo "📌 Node Name: $NODE_NAME"
 echo "📌 Node IP: $NODE_IP"
 
 # Gerekli bağımlılıkları yükleyelim
-sudo apt update && sudo apt install -y curl gnupg apt-transport-https
+sudo apt update && sudo apt install -y curl wget build-essential
 
 # Check if Erlang is already installed with correct version
 echo "🔄 Checking Erlang installation..."
@@ -45,6 +45,7 @@ if command -v erl >/dev/null 2>&1; then
     else
         echo "⚠️ Found Erlang $CURRENT_ERLANG_VERSION but need $ERLANG_VERSION"
         echo "🔄 Removing existing Erlang installation..."
+        sudo rm -f /etc/apt/sources.list.d/erlang*  # Remove Erlang repo
         sudo apt-get remove -y erlang* || true
         sudo apt-get autoremove -y
         sudo rm -rf /usr/lib/erlang
@@ -56,11 +57,17 @@ else
     INSTALL_ERLANG=true
 fi
 
+# Remove any remaining repository files
+sudo rm -f /etc/apt/sources.list.d/erlang*
+sudo rm -f /etc/apt/sources.list.d/rabbitmq*
+
+# Update package list after removing repos
+sudo apt-get update
+
 if [ "$INSTALL_ERLANG" = true ]; then
     echo "🔄 Installing Erlang $ERLANG_VERSION from source..."
     
     # Install build dependencies
-    sudo apt-get update
     sudo apt-get install -y \
         build-essential \
         autoconf \
@@ -145,6 +152,7 @@ if ! erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> h
     echo "⚠️ Crypto module not found, reinstalling Erlang from source..."
     
     # Remove existing Erlang installation
+    sudo rm -f /etc/apt/sources.list.d/erlang*  # Remove Erlang repo
     sudo apt-get remove -y erlang* || true
     sudo apt-get autoremove -y
     sudo rm -rf /usr/lib/erlang
