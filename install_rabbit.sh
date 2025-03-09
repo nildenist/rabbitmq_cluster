@@ -50,8 +50,6 @@ if command -v erl >/dev/null 2>&1; then
         sudo rm -rf /usr/lib/erlang
         sudo rm -f /usr/bin/erl
         sudo rm -f /usr/bin/erlc
-        echo "🔄 Installing required Erlang version..."
-        # Continue with Erlang installation
         INSTALL_ERLANG=true
     fi
 else
@@ -59,84 +57,79 @@ else
 fi
 
 if [ "$INSTALL_ERLANG" = true ]; then
-    echo "🔄 Checking Erlang modules..."
-    if ! erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> halt(0); _ -> halt(1) end.'; then
-        echo "⚠️ Crypto module not found, reinstalling Erlang from source..."
-        
-        # Remove existing Erlang installation
-        sudo apt-get remove -y erlang* || true
-        sudo apt-get autoremove -y
-        sudo rm -rf /usr/lib/erlang
-        sudo rm -f /usr/bin/erl
-        sudo rm -f /usr/bin/erlc
-        
-        # Install build dependencies
-        sudo apt-get update
-        sudo apt-get install -y \
-            build-essential \
-            autoconf \
-            m4 \
-            libncurses5-dev \
-            libssh-dev \
-            unixodbc-dev \
-            libgmp3-dev \
-            libssl-dev \
-            libsctp-dev \
-            lksctp-tools \
-            ed \
-            flex \
-            libxml2-utils \
-            wget \
-            || {
-                echo "❌ Failed to install build dependencies"
-                exit 1
-            }
-
-        # Download and extract Erlang source
-        echo "🔄 Downloading Erlang source..."
-        ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
-        wget -q "$ERLANG_DOWNLOAD_URL" || {
-            echo "❌ Failed to download Erlang source"
-            echo "URL: $ERLANG_DOWNLOAD_URL"
+    echo "🔄 Installing Erlang $ERLANG_VERSION from source..."
+    
+    # Install build dependencies
+    sudo apt-get update
+    sudo apt-get install -y \
+        build-essential \
+        autoconf \
+        m4 \
+        libncurses5-dev \
+        libssh-dev \
+        unixodbc-dev \
+        libgmp3-dev \
+        libssl-dev \
+        libsctp-dev \
+        lksctp-tools \
+        ed \
+        flex \
+        libxml2-utils \
+        wget \
+        || {
+            echo "❌ Failed to install build dependencies"
             exit 1
         }
 
-        tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
-            echo "❌ Failed to extract Erlang source"
+    # Download and extract Erlang source
+    echo "🔄 Downloading Erlang source..."
+    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
+    wget -q "$ERLANG_DOWNLOAD_URL" || {
+        echo "❌ Failed to download Erlang source"
+        echo "URL: $ERLANG_DOWNLOAD_URL"
+        exit 1
+    }
+
+    tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
+        echo "❌ Failed to extract Erlang source"
+        exit 1
+    }
+
+    cd otp_src_${ERLANG_VERSION} || {
+        echo "❌ Failed to change to Erlang directory"
+        exit 1
+    }
+
+    # Configure and build
+    ./otp_build autoconf || {
+        echo "❌ Failed to run autoconf"
+        exit 1
+    }
+
+    ./configure --prefix=/usr/local \
+        --enable-threads \
+        --enable-smp-support \
+        --enable-kernel-poll \
+        --enable-ssl \
+        --with-ssl \
+        --enable-crypto \
+        || {
+            echo "❌ Configure failed"
             exit 1
         }
 
-        cd otp_src_${ERLANG_VERSION} || {
-            echo "❌ Failed to change to Erlang directory"
-            exit 1
-        }
+    make -j$(nproc) || {
+        echo "❌ Make failed"
+        exit 1
+    }
 
-        # Configure and build
-        ./configure --prefix=/usr/local \
-            --enable-threads \
-            --enable-smp-support \
-            --enable-kernel-poll \
-            --enable-ssl \
-            --with-ssl \
-            --enable-crypto \
-            || {
-                echo "❌ Configure failed"
-                exit 1
-            }
+    sudo make install || {
+        echo "❌ Make install failed"
+        exit 1
+    }
 
-        make -j$(nproc) || {
-            echo "❌ Make failed"
-            exit 1
-        }
-
-        sudo make install || {
-            echo "❌ Make install failed"
-            exit 1
-        }
-
-        cd ..
-        rm -rf otp_src_${ERLANG_VERSION}*
-    fi
+    cd ..
+    rm -rf otp_src_${ERLANG_VERSION}*
 fi
 
 # Verify Erlang installation
