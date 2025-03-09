@@ -527,201 +527,89 @@ echo "RABBITMQ_LOG_BASE=/var/log/rabbitmq"
 echo "Current user: $(whoami)"
 echo "RabbitMQ user home: $(eval echo ~rabbitmq)"
 
-# Start RabbitMQ with more verbose output
-echo "🚀 Starting RabbitMQ service..."
+# Add this section after RabbitMQ installation and before starting the service
 
-# Create a temporary environment file with explicit exports
-TEMP_ENV_FILE=$(mktemp)
-cat << EOF > $TEMP_ENV_FILE
-export HOME=/home/rabbitmq
-export RABBITMQ_HOME=/opt/rabbitmq
-export RABBITMQ_NODENAME="${NODE_NAME}"
-export RABBITMQ_NODE_IP_ADDRESS="${NODE_IP}"
-export RABBITMQ_NODE_PORT="${RABBITMQ_PORT}"
-export RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-export RABBITMQ_LOG_BASE=/var/log/rabbitmq
-export RABBITMQ_CONSOLE_LOG=new
-export RABBITMQ_LOGS=/var/log/rabbitmq/rabbit@${SHORTNAME}.log
-export RABBITMQ_DIST_PORT=25672
-export RABBITMQ_PID_FILE=/var/lib/rabbitmq/mnesia/rabbit@${SHORTNAME}.pid
-export RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-export PATH=/opt/rabbitmq/sbin:\$PATH
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
+echo "🔄 Creating systemd service..."
+cat << EOF | sudo tee /etc/systemd/system/rabbitmq-server.service
+[Unit]
+Description=RabbitMQ Server
+After=network.target epmd@0.0.0.0.socket
+Wants=network.target epmd@0.0.0.0.socket
+
+[Service]
+Type=notify
+User=rabbitmq
+Group=rabbitmq
+Environment=HOME=/home/rabbitmq
+Environment=RABBITMQ_HOME=/opt/rabbitmq
+Environment=RABBITMQ_NODENAME=${NODE_NAME}
+Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
+Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
+Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
+Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LANG=en_US.UTF-8
+Environment=LC_ALL=en_US.UTF-8
+
+ExecStart=/opt/rabbitmq/sbin/rabbitmq-server
+ExecStop=/opt/rabbitmq/sbin/rabbitmqctl stop
+Restart=always
+RestartSec=10
+WorkingDirectory=/var/lib/rabbitmq
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-# Set proper permissions
-sudo chown rabbitmq:rabbitmq $TEMP_ENV_FILE
-sudo chmod 644 $TEMP_ENV_FILE
+# Reload systemd and enable the service
+sudo systemctl daemon-reload
+sudo systemctl enable rabbitmq-server.service
 
-# Start RabbitMQ with explicit environment
-sudo -u rabbitmq bash -c "
-    set -x  # Enable debug output
-    set -a  # Automatically export all variables
-    source $TEMP_ENV_FILE
-    set +a
+# Modify the worker node joining section to handle cluster inconsistency
+if [ "$NODE_TYPE" == "worker1" ] || [ "$NODE_TYPE" == "worker2" ]; then
+    echo "🔄 $NODE_NAME, connecting to Master Node: $MASTER_NODE_NAME ($MASTER_IP)"
     
-    echo 'Starting server with environment:'
-    env | grep RABBIT
-    
-    cd /var/lib/rabbitmq
-    
-    # Start server directly (not detached) to see output
-    echo 'Starting RabbitMQ server...'
-    exec /opt/rabbitmq/sbin/rabbitmq-server > /var/log/rabbitmq/startup.log 2>&1
-" &
-
-# Clean up temp file after starting
-rm -f $TEMP_ENV_FILE
-
-# Wait for server to start
-echo "🔄 Waiting for RabbitMQ to start..."
-for i in $(seq 1 30); do
-    if sudo rabbitmqctl status >/dev/null 2>&1; then
-        echo "✅ RabbitMQ is running"
-        break
-    fi
-    echo "⏳ Waiting for RabbitMQ to start ($i/30)"
-    echo "🔍 Current logs:"
-    tail -n 5 /var/log/rabbitmq/startup.log
-    tail -n 5 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-    sleep 2
-done
-
-# Check final status
-if ! sudo rabbitmqctl status >/dev/null 2>&1; then
-    echo "❌ RabbitMQ failed to start"
-    echo "🔍 Startup log:"
-    cat /var/log/rabbitmq/startup.log
-    echo "🔍 Main log:"
-    cat /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-    echo "🔍 Process status:"
-    ps aux | grep -E "[r]abbit|[b]eam"
-    echo "🔍 EPMD status:"
-    epmd -names
-    exit 1
-fi
-
-# Check process
-echo "🔍 Checking RabbitMQ processes:"
-ps aux | grep -E "[r]abbit|[b]eam"
-
-# Check EPMD
-echo "🔍 Checking EPMD status:"
-epmd -names
-
-# Check if server is responding
-echo "🔍 Checking server status:"
-sudo rabbitmqctl status || {
-    echo "❌ RabbitMQ failed to start"
-    echo "🔍 Last 50 lines of logs:"
-    tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log
-    exit 1
-}
-
-# Verify node is running
-echo "🔄 Verifying RabbitMQ node status..."
-sudo rabbitmqctl status || {
-    echo "❌ RabbitMQ node is not running"
-    exit 1
-}
-
-# Enable management plugin
-echo "🔄 Enabling RabbitMQ Management Plugin..."
-
-# Wait for RabbitMQ to be fully started
-for i in $(seq 1 30); do
-    if sudo rabbitmqctl status >/dev/null 2>&1; then
-        echo "✅ RabbitMQ is ready for configuration"
-        break
-    fi
-    echo "⏳ Waiting for RabbitMQ to be ready... ($i/30)"
-    sleep 2
-done
-
-# Configure plugins and permissions
-echo "🔄 Configuring RabbitMQ..."
-sudo rabbitmqctl -n $NODE_NAME stop_app || {
-    echo "❌ Failed to stop RabbitMQ app"
-    exit 1
-}
-
-sudo rabbitmqctl -n $NODE_NAME reset || {
-    echo "❌ Failed to reset RabbitMQ"
-    exit 1
-}
-
-sudo rabbitmqctl -n $NODE_NAME start_app || {
-    echo "❌ Failed to start RabbitMQ app"
-    exit 1
-}
-
-# Enable the management plugin
-sudo rabbitmq-plugins -n $NODE_NAME enable rabbitmq_management || {
-    echo "❌ Failed to enable management plugin"
-    exit 1
-}
-
-# Verify the plugin is enabled
-echo "🔄 Verifying management plugin..."
-sudo rabbitmq-plugins list | grep rabbitmq_management || {
-    echo "❌ Management plugin not enabled"
-    exit 1
-}
-
-# Wait for management plugin to be ready
-echo "🔄 Waiting for management plugin to be ready..."
-for i in $(seq 1 30); do
-    if curl -s -f http://localhost:15672 >/dev/null 2>&1; then
-        echo "✅ Management plugin is ready"
-        break
-    fi
-    echo "⏳ Waiting for management interface... ($i/30)"
-    sleep 2
-done
-
-# Restart service to apply changes
-echo "🔄 Restarting RabbitMQ service..."
-sudo rabbitmqctl -n $NODE_NAME stop
-sleep 5
-sudo -u rabbitmq RABBITMQ_HOME=/opt/rabbitmq RABBITMQ_NODENAME=$NODE_NAME rabbitmq-server -detached
-sleep 10
-
-# Check connectivity to master
-echo "🔄 Checking connectivity to master node..."
-if ! ping -c 1 $MASTER_IP &> /dev/null; then
-    echo "❌ Cannot reach master node at $MASTER_IP"
-    exit 1
-fi
-
-# Master Node Ayarları
-if [ "$NODE_TYPE" == "master" ]; then
-    echo "🔄 Master node yapılandırılıyor..."
+    # Stop RabbitMQ and reset
     sudo rabbitmqctl stop_app
     sudo rabbitmqctl reset
+    
+    # Check if already in cluster
+    CLUSTER_STATUS=$(sudo rabbitmqctl cluster_status --formatter json)
+    if echo "$CLUSTER_STATUS" | grep -q "rabbit@master-node"; then
+        echo "⚠️ Already in cluster with master-node, forcing reset..."
+        sudo rabbitmqctl forget_cluster_node rabbit@master-node || true
+        sudo rabbitmqctl reset
+    fi
+    
+    # Try to join cluster
+    for i in $(seq 1 5); do
+        if sudo rabbitmqctl join_cluster $MASTER_NODE_NAME; then
+            echo "✅ Successfully joined cluster"
+            break
+        else
+            echo "⚠️ Failed to join cluster, attempt $i/5"
+            sudo rabbitmqctl forget_cluster_node $MASTER_NODE_NAME || true
+            sudo rabbitmqctl reset
+            sleep 5
+        fi
+    done
+    
+    # Start the app
     sudo rabbitmqctl start_app
-
-    echo "🔄 Yönetici Kullanıcı Ayarları Yapılıyor..."
-    sudo rabbitmqctl add_user $RABBITMQ_ADMIN_USER $RABBITMQ_ADMIN_PASSWORD
-    sudo rabbitmqctl set_user_tags $RABBITMQ_ADMIN_USER administrator
-    sudo rabbitmqctl set_permissions -p / $RABBITMQ_ADMIN_USER ".*" ".*" ".*"
-
-    echo "✅ Master Node Kurulumu Tamamlandı!"
-
-# Worker Node Ayarları
-elif [ "$NODE_TYPE" == "worker1" ] || [ "$NODE_TYPE" == "worker2" ]; then
-    echo "🔄 $NODE_NAME, Master Node'a bağlanıyor: $MASTER_NODE_NAME ($MASTER_IP)"
-    sudo rabbitmqctl stop_app
-    sudo rabbitmqctl reset
-    sudo rabbitmqctl join_cluster $MASTER_NODE_NAME
-    sudo rabbitmqctl start_app
-
-    echo "✅ Worker Node Master'a Bağlandı: $MASTER_NODE_NAME"
-
-else
-    echo "❌ Geçersiz node tipi!"
-    exit 1
+    
+    echo "✅ Worker Node connected to Master: $MASTER_NODE_NAME"
+    
+    # Verify cluster status
+    echo "🔄 Verifying cluster status..."
+    sudo rabbitmqctl cluster_status
 fi
+
+# Start the service using systemd instead of manual start
+echo "🔄 Starting RabbitMQ service..."
+sudo systemctl start rabbitmq-server
+sudo systemctl status rabbitmq-server
 
 # Log ve Data Yollarını Belirleme
 echo "🔄 RabbitMQ Log & Mnesia Yolları Ayarlanıyor..."

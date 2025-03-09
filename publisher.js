@@ -2,7 +2,7 @@ const amqp = require('amqplib');
 
 async function publishMessages() {
     try {
-        // RabbitMQ'ya bağlan
+        // RabbitMQ' rabbit-cluster.opet.com
         const connection = await amqp.connect('amqp://admin:secret@10.128.0.37');
         const channel = await connection.createChannel();
         const queue = 'test_queue';
@@ -11,7 +11,7 @@ async function publishMessages() {
         await channel.assertQueue(queue, { durable: true });
 
         // 10 mesaj gönderelim
-        for (let i = 1; i <= 10; i++) {
+        for (let i = 1; i <= 500; i++) {
             const message = `Test mesajı ${i}`;
             channel.sendToQueue(queue, Buffer.from(message), { persistent: true });
             console.log(`[x] Gönderildi: ${message}`);
@@ -28,3 +28,4 @@ async function publishMessages() {
 }
 
 publishMessages();
+
