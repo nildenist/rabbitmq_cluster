@@ -67,6 +67,7 @@ else
         flex \
         libxml2-utils \
         wget \
+        libcrypto++-dev \
         || {
             echo "❌ Failed to install build dependencies"
             exit 1
@@ -111,9 +112,9 @@ else
         --enable-threads \
         --enable-smp-support \
         --enable-kernel-poll \
-        --disable-hipe \
-        --disable-sctp \
-        --disable-dynamic-ssl-lib \
+        --enable-ssl \
+        --with-ssl \
+        --enable-crypto \
         || {
             echo "❌ Configure failed"
             exit 1
