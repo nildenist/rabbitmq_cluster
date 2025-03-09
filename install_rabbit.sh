@@ -92,12 +92,62 @@ erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "relea
     exit 1
 }
 
-# Verify crypto module
+# After verifying Erlang version
+echo "🔄 Checking Erlang modules..."
+if ! erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> halt(0); _ -> halt(1) end.'; then
+    echo "⚠️ Crypto module not found, reinstalling Erlang with all required modules..."
+    
+    # Remove existing Erlang installation
+    sudo apt-get remove -y erlang* || true
+    sudo apt-get autoremove -y
+    sudo rm -rf /usr/lib/erlang
+    sudo rm -f /usr/bin/erl
+    sudo rm -f /usr/bin/erlc
+    
+    # Add Erlang Solutions repository
+    wget -O- https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo apt-key add -
+    echo "deb https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
+    
+    # Update and install Erlang with all required modules
+    sudo apt-get update
+    sudo apt-get install -y \
+        erlang-base \
+        erlang-crypto \
+        erlang-public-key \
+        erlang-ssl \
+        erlang-asn1 \
+        erlang-runtime-tools \
+        erlang-mnesia \
+        erlang-os-mon \
+        erlang-syntax-tools \
+        erlang-inets \
+        erlang-tools \
+        erlang-xmerl \
+        erlang-dev \
+        || {
+            echo "❌ Failed to install Erlang packages"
+            exit 1
+        }
+fi
+
+# Verify crypto module again
 echo "🔄 Verifying crypto module..."
-erl -noshell -eval 'case crypto:start() of ok -> io:format("Crypto module working~n"), halt(0); _ -> halt(1) end.' || {
+if ! erl -noshell -eval '
+    case application:ensure_all_started(crypto) of
+        {ok, _} -> 
+            io:format("Crypto module working~n"),
+            halt(0);
+        Error -> 
+            io:format("Error: ~p~n", [Error]),
+            halt(1)
+    end.'; then
     echo "❌ Crypto module verification failed"
+    echo "🔍 Checking Erlang installation:"
+    dpkg -l | grep erlang
+    echo "🔍 Checking crypto module location:"
+    find /usr/lib/erlang -name crypto.beam
     exit 1
-}
+fi
 
 # RabbitMQ Kurulumu
 echo "🔄 RabbitMQ $RABBITMQ_VERSION kuruluyor..."
