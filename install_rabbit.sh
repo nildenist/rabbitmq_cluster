@@ -42,119 +42,46 @@ if command -v erl >/dev/null 2>&1; then
     CURRENT_ERLANG_VERSION=$(erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell)
     echo "✅ Erlang $CURRENT_ERLANG_VERSION is already installed"
 else
-    echo "🔄 Erlang $ERLANG_VERSION kuruluyor..."
-
-    # Remove Erlang Solutions repository if exists
-    echo "🔄 Cleaning up package sources..."
-    sudo rm -f /etc/apt/sources.list.d/erlang*
-    sudo rm -f /etc/apt/sources.list.d/rabbitmq*
+    echo "🔄 Installing Erlang from repository..."
+    
+    # Add Erlang Solutions repository
+    wget -O- https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo apt-key add -
+    echo "deb https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
+    
+    # Update and install Erlang
     sudo apt-get update
-
-    # Install build dependencies
-    echo "🔄 Installing build dependencies..."
     sudo apt-get install -y \
-        build-essential \
-        autoconf \
-        m4 \
-        libncurses5-dev \
-        libssh-dev \
-        unixodbc-dev \
-        libgmp3-dev \
-        libssl-dev \
-        libsctp-dev \
-        lksctp-tools \
-        ed \
-        flex \
-        libxml2-utils \
-        wget \
-        libcrypto++-dev \
-        erlang-dev \
+        erlang-base \
         erlang-crypto \
+        erlang-public-key \
+        erlang-ssl \
+        erlang-asn1 \
+        erlang-runtime-tools \
+        erlang-mnesia \
+        erlang-os-mon \
+        erlang-syntax-tools \
+        erlang-inets \
+        erlang-tools \
+        erlang-xmerl \
         || {
-            echo "❌ Failed to install build dependencies"
+            echo "❌ Failed to install Erlang packages"
             exit 1
         }
-
-    # Download and extract Erlang source
-    echo "🔄 Downloading Erlang source..."
-    ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
-    wget -q "$ERLANG_DOWNLOAD_URL" || {
-        echo "❌ Failed to download Erlang source"
-        echo "URL: $ERLANG_DOWNLOAD_URL"
-        exit 1
-    }
-
-    tar xzf otp_src_${ERLANG_VERSION}.tar.gz || {
-        echo "❌ Failed to extract Erlang source"
-        exit 1
-    }
-
-    cd otp_src_${ERLANG_VERSION} || {
-        echo "❌ Failed to change to Erlang directory"
-        exit 1
-    }
-
-    # Prepare for build
-    echo "🔄 Preparing Erlang build..."
-    ./otp_build autoconf || {
-        echo "❌ Failed to run autoconf"
-        exit 1
-    }
-
-    # Configure with crypto support
-    ./configure --prefix=/usr/local \
-        --without-wx \
-        --without-debugger \
-        --without-observer \
-        --without-javac \
-        --without-et \
-        --without-megaco \
-        --without-diameter \
-        --without-edoc \
-        --enable-threads \
-        --enable-smp-support \
-        --enable-kernel-poll \
-        --enable-ssl \
-        --with-ssl=/usr/lib/ssl \
-        --enable-crypto \
-        --with-crypto \
-        --with-ssl-rpath=yes \
-        || {
-            echo "❌ Configure failed"
-            exit 1
-        }
-
-    # Build and install
-    echo "🔄 Building Erlang (this may take a while)..."
-    make -j$(nproc) || {
-        echo "❌ Make failed"
-        exit 1
-    }
-
-    echo "🔄 Installing Erlang..."
-    sudo make install || {
-        echo "❌ Make install failed"
-        exit 1
-    }
-
-    # After make install, verify crypto module
-    echo "🔄 Verifying Erlang crypto module..."
-    erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> halt(0); _ -> halt(1) end.' || {
-        echo "❌ Erlang crypto module verification failed"
-        exit 1
-    }
-
-    # Cleanup
-    cd ..
-    rm -rf otp_src_${ERLANG_VERSION}*
-
-    # Verify installation
-    echo "🔄 Verifying Erlang installation..."
-    erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell || {
-        echo "❌ Erlang installation verification failed"
-        exit 1
-    }
 fi
+
+# Verify Erlang installation
+echo "🔄 Verifying Erlang installation..."
+erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell || {
+    echo "❌ Erlang installation verification failed"
+    exit 1
+}
+
+# Verify crypto module
+echo "🔄 Verifying crypto module..."
+erl -noshell -eval 'case crypto:start() of ok -> io:format("Crypto module working~n"), halt(0); _ -> halt(1) end.' || {
+    echo "❌ Crypto module verification failed"
+    exit 1
+}
 
 # RabbitMQ Kurulumu
 echo "🔄 RabbitMQ $RABBITMQ_VERSION kuruluyor..."
