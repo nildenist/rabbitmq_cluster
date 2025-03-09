@@ -81,7 +81,7 @@ if [ "$INSTALL_ERLANG" = true ]; then
             exit 1
         }
 
-    # Download and extract Erlang source
+    # Download and extract Erlang source from GitHub
     echo "🔄 Downloading Erlang source..."
     ERLANG_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz"
     wget -q "$ERLANG_DOWNLOAD_URL" || {
