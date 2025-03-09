@@ -411,31 +411,71 @@ RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 EOF
 
 # Create more detailed RabbitMQ config
-cat << EOF | sudo tee /etc/rabbitmq/rabbitmq.conf
-listeners.tcp.default = $RABBITMQ_PORT
-management.tcp.port = $RABBITMQ_MANAGEMENT_PORT
-management.tcp.ip = 0.0.0.0
-loopback_users = none
+if [ "$NODE_TYPE" == "master" ]; then
+    # Master node configuration
+    sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+listeners.tcp.default = ${RABBITMQ_PORT}
+management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
 
-# Logging configuration
+# Basic networking
+tcp_listeners.1 = ${RABBITMQ_PORT}
+management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
+management.listener.ip = 0.0.0.0
+
+# Basic logging
 log.file = true
-log.file.level = debug
-log.file.rotation.date = \$D0
-log.file.rotation.size = 10485760
-log.file.rotation.count = 10
+log.file.level = info
+log.dir = /var/log/rabbitmq
 
-# Networking
-listeners.tcp.local = 127.0.0.1:$RABBITMQ_PORT
-listeners.tcp.external = $NODE_IP:$RABBITMQ_PORT
+# Cluster settings
+cluster_partition_handling = ignore
+cluster_formation.peer_discovery_backend = classic_config
+cluster_formation.classic_config.nodes.1 = ${NODE_NAME}
 
-# Clustering
-cluster_formation.peer_discovery_backend = rabbit_peer_discovery_classic_config
-cluster_formation.classic_config.nodes.$NODE_TYPE = rabbit@$SHORTNAME
+# Distribution ports
+distribution.listener.port_range.min = 25672
+distribution.listener.port_range.max = 25672
 
-# Distribution
-distribution.port_range.min = 25672
-distribution.port_range.max = 25672
+# Memory and disk limits
+vm_memory_high_watermark.relative = 0.7
+disk_free_limit.absolute = 2GB
+
+# Security
+loopback_users = none
 EOF
+else
+    # Worker node configuration
+    sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+listeners.tcp.default = ${RABBITMQ_PORT}
+management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
+
+# Basic networking
+tcp_listeners.1 = ${RABBITMQ_PORT}
+management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
+management.listener.ip = 0.0.0.0
+
+# Basic logging
+log.file = true
+log.file.level = info
+log.dir = /var/log/rabbitmq
+
+# Cluster settings
+cluster_partition_handling = ignore
+cluster_formation.peer_discovery_backend = classic_config
+cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
+
+# Distribution ports
+distribution.listener.port_range.min = 25672
+distribution.listener.port_range.max = 25672
+
+# Memory and disk limits
+vm_memory_high_watermark.relative = 0.7
+disk_free_limit.absolute = 2GB
+
+# Security
+loopback_users = none
+EOF
+fi
 
 # Add this before starting RabbitMQ
 echo "🔄 Verifying RabbitMQ installation..."
@@ -681,6 +721,10 @@ cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${NODE_NAME}
 
+# Distribution ports
+distribution.listener.port_range.min = 25672
+distribution.listener.port_range.max = 25672
+
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
 disk_free_limit.absolute = 2GB
@@ -708,6 +752,10 @@ log.dir = /var/log/rabbitmq
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
+
+# Distribution ports
+distribution.listener.port_range.min = 25672
+distribution.listener.port_range.max = 25672
 
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
