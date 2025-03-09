@@ -68,6 +68,8 @@ else
         libxml2-utils \
         wget \
         libcrypto++-dev \
+        erlang-dev \
+        erlang-crypto \
         || {
             echo "❌ Failed to install build dependencies"
             exit 1
@@ -99,7 +101,7 @@ else
         exit 1
     }
 
-    # Configure with minimal components needed for RabbitMQ
+    # Configure with crypto support
     ./configure --prefix=/usr/local \
         --without-wx \
         --without-debugger \
@@ -113,8 +115,10 @@ else
         --enable-smp-support \
         --enable-kernel-poll \
         --enable-ssl \
-        --with-ssl \
+        --with-ssl=/usr/lib/ssl \
         --enable-crypto \
+        --with-crypto \
+        --with-ssl-rpath=yes \
         || {
             echo "❌ Configure failed"
             exit 1
@@ -130,6 +134,13 @@ else
     echo "🔄 Installing Erlang..."
     sudo make install || {
         echo "❌ Make install failed"
+        exit 1
+    }
+
+    # After make install, verify crypto module
+    echo "🔄 Verifying Erlang crypto module..."
+    erl -noshell -eval 'case code:ensure_loaded(crypto) of {module,crypto} -> halt(0); _ -> halt(1) end.' || {
+        echo "❌ Erlang crypto module verification failed"
         exit 1
     }
 
@@ -331,6 +342,18 @@ for COOKIE_FILE in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie "$CURRE
         fi
     fi
 done
+
+# Before starting RabbitMQ
+echo "🔄 Verifying Erlang crypto module..."
+if ! erl -noshell -eval 'case application:ensure_all_started(crypto) of {ok,_} -> halt(0); _ -> halt(1) end.'; then
+    echo "❌ Failed to start Erlang crypto application"
+    echo "🔄 Installing crypto module..."
+    sudo apt-get install -y erlang-crypto
+    if ! erl -noshell -eval 'case application:ensure_all_started(crypto) of {ok,_} -> halt(0); _ -> halt(1) end.'; then
+        echo "❌ Still unable to start crypto application"
+        exit 1
+    fi
+fi
 
 # Before starting RabbitMQ service
 echo "🔄 Preparing RabbitMQ environment..."
