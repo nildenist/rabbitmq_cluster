@@ -36,14 +36,30 @@ echo "📌 Node IP: $NODE_IP"
 # Gerekli bağımlılıkları yükleyelim
 sudo apt update && sudo apt install -y curl gnupg apt-transport-https
 
-# Check if Erlang is already installed
+# Check if Erlang is already installed with correct version
 echo "🔄 Checking Erlang installation..."
 if command -v erl >/dev/null 2>&1; then
     CURRENT_ERLANG_VERSION=$(erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell)
-    echo "✅ Erlang $CURRENT_ERLANG_VERSION is already installed"
+    if [ "$CURRENT_ERLANG_VERSION" = "$ERLANG_VERSION" ]; then
+        echo "✅ Erlang $CURRENT_ERLANG_VERSION is already installed"
+    else
+        echo "⚠️ Found Erlang $CURRENT_ERLANG_VERSION but need $ERLANG_VERSION"
+        echo "🔄 Removing existing Erlang installation..."
+        sudo apt-get remove -y erlang* || true
+        sudo apt-get autoremove -y
+        sudo rm -rf /usr/lib/erlang
+        sudo rm -f /usr/bin/erl
+        sudo rm -f /usr/bin/erlc
+        echo "🔄 Installing required Erlang version..."
+        # Continue with Erlang installation
+        INSTALL_ERLANG=true
+    fi
 else
-    echo "🔄 Installing Erlang from repository..."
-    
+    INSTALL_ERLANG=true
+fi
+
+if [ "$INSTALL_ERLANG" = true ]; then
+    echo "🔄 Installing Erlang $ERLANG_VERSION..."
     # Add Erlang Solutions repository
     wget -O- https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc | sudo apt-key add -
     echo "deb https://packages.erlang-solutions.com/ubuntu $(lsb_release -cs) contrib" | sudo tee /etc/apt/sources.list.d/erlang.list
