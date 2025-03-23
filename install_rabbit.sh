@@ -819,3 +819,8 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Check cookie files on both master and worker2
+sudo cat /var/lib/rabbitmq/.erlang.cookie  # On both nodes
+sudo cat /home/rabbitmq/.erlang.cookie     # On both nodes
+sudo cat /root/.erlang.cookie              # On both nodes
