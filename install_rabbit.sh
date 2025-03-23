@@ -440,19 +440,19 @@ else
     # Worker node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
 # Networking
-listeners.tcp.default = ${RABBITMQ_PORT}
-management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
+listeners.tcp.default = 5672
+management.listener.port = 15672
 management.listener.ip = 0.0.0.0
 
 # Basic logging
 log.file = true
-log.file.level = info
+log.file.level = debug  # Temporarily increase log level
 log.dir = /var/log/rabbitmq
 
 # Cluster settings
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
-cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
+cluster_formation.classic_config.nodes.1 = rabbit@master-node
 
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
@@ -717,19 +717,19 @@ else
     # Worker node configuration
     sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
 # Networking
-listeners.tcp.default = ${RABBITMQ_PORT}
-management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
+listeners.tcp.default = 5672
+management.listener.port = 15672
 management.listener.ip = 0.0.0.0
 
 # Basic logging
 log.file = true
-log.file.level = info
+log.file.level = debug  # Temporarily increase log level
 log.dir = /var/log/rabbitmq
 
 # Cluster settings
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
-cluster_formation.classic_config.nodes.1 = ${MASTER_NODE_NAME}
+cluster_formation.classic_config.nodes.1 = rabbit@master-node
 
 # Memory and disk limits
 vm_memory_high_watermark.relative = 0.7
@@ -824,3 +824,153 @@ EOF
 sudo cat /var/lib/rabbitmq/.erlang.cookie  # On both nodes
 sudo cat /home/rabbitmq/.erlang.cookie     # On both nodes
 sudo cat /root/.erlang.cookie              # On both nodes
+
+# Restart RabbitMQ with the new configuration
+sudo systemctl restart rabbitmq-server
+
+# Add this section after line 748 (after "Clean any existing state before starting")
+# Complete cleanup and restart sequence
+echo "🔄 Performing complete cleanup and restart sequence..."
+sudo systemctl stop rabbitmq-server
+sudo rm -rf /var/lib/rabbitmq/mnesia/*
+sudo rm -f /var/log/rabbitmq/*.log
+sudo rm -f /opt/rabbitmq/var/lib/rabbitmq/mnesia/*
+
+# Verify and fix cookie files with proper permissions
+echo "🔄 Fixing cookie files with proper permissions..."
+sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /var/lib/rabbitmq/.erlang.cookie'
+sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /root/.erlang.cookie'
+sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /home/rabbitmq/.erlang.cookie'
+
+# Set proper permissions for cookie files
+sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
+sudo chmod 400 /root/.erlang.cookie
+sudo chmod 400 /home/rabbitmq/.erlang.cookie
+sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
+sudo chown rabbitmq:rabbitmq /home/rabbitmq/.erlang.cookie
+
+# Verify hostname
+echo "🔄 Setting hostname..."
+sudo hostnamectl set-hostname $SHORTNAME
+
+# Update /etc/hosts with clean entries
+echo "🔄 Updating hosts file..."
+sudo sed -i "/$SHORTNAME/d" /etc/hosts
+sudo sed -i "/master-node/d" /etc/hosts
+sudo sed -i "/worker1/d" /etc/hosts
+sudo sed -i "/worker2/d" /etc/hosts
+
+# Add fresh host entries
+echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
+echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
+echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
+echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
+echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+
+# Continue with the existing script...
+
+# Add after the RabbitMQ service start
+if [ "$NODE_TYPE" != "master" ]; then
+    echo "🔄 Joining cluster as $NODE_TYPE..."
+    
+    # Stop the RabbitMQ application (but not the Erlang node)
+    sudo rabbitmqctl stop_app
+    
+    # Reset the node
+    sudo rabbitmqctl reset
+    
+    # Join the cluster with retry logic
+    MAX_RETRIES=5
+    RETRY_COUNT=0
+    JOINED=false
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$JOINED" = false ]; do
+        echo "🔄 Attempting to join cluster (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+        if sudo rabbitmqctl join_cluster rabbit@master-node; then
+            JOINED=true
+            echo "✅ Successfully joined the cluster"
+        else
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Join attempt failed, waiting before retry..."
+                sleep 10
+            fi
+        fi
+    done
+    
+    if [ "$JOINED" = false ]; then
+        echo "❌ Failed to join cluster after $MAX_RETRIES attempts"
+        exit 1
+    fi
+    
+    # Start the application
+    sudo rabbitmqctl start_app
+    
+    # Verify cluster status
+    echo "🔄 Verifying cluster status..."
+    sudo rabbitmqctl cluster_status
+fi
+
+# Enable management plugin and other necessary plugins
+echo "🔄 Enabling RabbitMQ plugins..."
+sudo rabbitmq-plugins enable rabbitmq_management
+sudo rabbitmq-plugins enable rabbitmq_management_agent
+sudo rabbitmq-plugins enable rabbitmq_prometheus
+
+# Restart RabbitMQ to apply plugin changes
+sudo systemctl restart rabbitmq-server
+
+# Wait for service to fully start
+sleep 10
+
+# If this is a worker node, join the cluster
+if [ "$NODE_TYPE" != "master" ]; then
+    echo "🔄 Joining cluster as $NODE_TYPE..."
+    
+    # Stop the RabbitMQ application (but not the Erlang node)
+    sudo rabbitmqctl stop_app
+    
+    # Reset the node
+    sudo rabbitmqctl reset
+    
+    # Join the cluster with retry logic
+    MAX_RETRIES=5
+    RETRY_COUNT=0
+    JOINED=false
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$JOINED" = false ]; do
+        echo "🔄 Attempting to join cluster (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+        if sudo rabbitmqctl join_cluster rabbit@master-node; then
+            JOINED=true
+            echo "✅ Successfully joined the cluster"
+        else
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Join attempt failed, waiting before retry..."
+                sleep 10
+            fi
+        fi
+    done
+    
+    if [ "$JOINED" = false ]; then
+        echo "❌ Failed to join cluster after $MAX_RETRIES attempts"
+        exit 1
+    fi
+    
+    # Start the application
+    sudo rabbitmqctl start_app
+    
+    # Verify cluster status
+    echo "🔄 Verifying cluster status..."
+    sudo rabbitmqctl cluster_status
+fi
+
+# Create admin user and set permissions
+echo "🔄 Setting up admin user..."
+sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" || true
+sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator
+sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"
+
+# Final verification of plugins
+echo "🔄 Verifying plugin status..."
+sudo rabbitmq-plugins list
