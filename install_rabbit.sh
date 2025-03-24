@@ -544,119 +544,8 @@ if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     exit 1
 fi
 
-# After creating the systemd service and before starting it, add:
-
-echo "🔄 Creating RabbitMQ configuration files..."
-
-# Create rabbitmq-env.conf with proper environment settings
-sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
-NODENAME=${NODE_NAME}
-HOME=/home/rabbitmq
-NODE_IP_ADDRESS=${NODE_IP}
-NODE_PORT=${RABBITMQ_PORT}
-RABBITMQ_BASE=/var/lib/rabbitmq
-RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-RABBITMQ_LOG_BASE=/var/log/rabbitmq
-EOF
-
-# Create rabbitmq.conf with proper configuration based on node type
-if [ "$NODE_TYPE" == "master" ]; then
-    # Master node configuration
-    sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
-# Networking
-listeners.tcp.default = ${RABBITMQ_PORT}
-management.listener.port = ${RABBITMQ_MANAGEMENT_PORT}
-management.listener.ip = 0.0.0.0
-
-# Basic logging
-log.file = true
-log.file.level = info
-log.dir = /var/log/rabbitmq
-
-# Cluster settings
-cluster_partition_handling = ignore
-cluster_formation.peer_discovery_backend = classic_config
-cluster_formation.classic_config.nodes.1 = ${NODE_NAME}
-
-# Memory and disk limits
-vm_memory_high_watermark.relative = 0.7
-disk_free_limit.absolute = 2GB
-
-# Security
-loopback_users = none
-EOF
-else
-    # Worker node configuration
-    sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
-# Networking
-listeners.tcp.default = 5672
-management.listener.port = 15672
-management.listener.ip = 0.0.0.0
-
-# Basic logging
-log.file = true
-log.file.level = debug  # Temporarily increase log level
-log.dir = /var/log/rabbitmq
-
-# Cluster settings
-cluster_partition_handling = ignore
-cluster_formation.peer_discovery_backend = classic_config
-cluster_formation.classic_config.nodes.1 = rabbit@master-node
-
-# Memory and disk limits
-vm_memory_high_watermark.relative = 0.7
-disk_free_limit.absolute = 2GB
-
-# Security
-loopback_users = none
-EOF
-fi
-
-# Set proper permissions
-sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
-sudo chmod 644 /etc/rabbitmq/rabbitmq.conf
-sudo chmod 644 /etc/rabbitmq/rabbitmq-env.conf
-
-# Clean any existing state before starting
-sudo systemctl stop rabbitmq-server || true
-sudo rm -rf /var/lib/rabbitmq/mnesia/*
-sudo rm -f /var/log/rabbitmq/*.log
-sudo rm -f erl_crash.dump
-
-# Verify directory permissions
-echo "🔄 Verifying directory permissions..."
-sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
-
-# Verify cookie files
-echo "🔄 Verifying cookie files..."
-for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /home/rabbitmq/.erlang.cookie /root/.erlang.cookie; do
-    if [ -f "$COOKIE_PATH" ]; then
-        CURRENT_COOKIE=$(sudo cat "$COOKIE_PATH")
-        if [ "$CURRENT_COOKIE" != "$RABBITMQ_COOKIE" ]; then
-            echo "⚠️ Fixing cookie mismatch in $COOKIE_PATH"
-            echo "$RABBITMQ_COOKIE" | sudo tee "$COOKIE_PATH" > /dev/null
-            sudo chmod 400 "$COOKIE_PATH"
-            sudo chown rabbitmq:rabbitmq "$COOKIE_PATH"
-        fi
-    fi
-done
-
-# Reload systemd
-sudo systemctl daemon-reload
-
-echo "✅ RabbitMQ configuration completed"
-
-# Add after creating directories and before starting the service
-echo "🔄 Setting up PID directory..."
-sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
-sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq/var/lib/rabbitmq
-sudo chmod 755 /opt/rabbitmq/var/lib/rabbitmq
-sudo chmod 755 /opt/rabbitmq/var/lib/rabbitmq/mnesia
-
-# Also update the systemd service to use the correct PID directory
+# First, create the systemd service file
+echo "🔄 Creating RabbitMQ systemd service..."
 cat << EOF | sudo tee /etc/systemd/system/rabbitmq-server.service
 [Unit]
 Description=RabbitMQ Server
@@ -667,6 +556,7 @@ Wants=network.target epmd@0.0.0.0.socket
 Type=notify
 User=rabbitmq
 Group=rabbitmq
+UMask=0027
 Environment=HOME=/home/rabbitmq
 Environment=RABBITMQ_HOME=/opt/rabbitmq
 Environment=RABBITMQ_NODENAME=${NODE_NAME}
@@ -675,7 +565,6 @@ Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
 Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
 Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
 Environment=RABBITMQ_MNESIA_BASE=/opt/rabbitmq/var/lib/rabbitmq/mnesia
-Environment=RABBITMQ_PID_FILE=/opt/rabbitmq/var/lib/rabbitmq/mnesia/\${RABBITMQ_NODENAME}.pid
 Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
 Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=LANG=en_US.UTF-8
@@ -683,7 +572,8 @@ Environment=LC_ALL=en_US.UTF-8
 
 ExecStart=/opt/rabbitmq/sbin/rabbitmq-server
 ExecStop=/opt/rabbitmq/sbin/rabbitmqctl stop
-Restart=always
+TimeoutStartSec=600
+Restart=on-failure
 RestartSec=10
 WorkingDirectory=/var/lib/rabbitmq
 LimitNOFILE=65536
@@ -692,27 +582,31 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
-# Check cookie files on both master and worker2
-sudo cat /var/lib/rabbitmq/.erlang.cookie  # On both nodes
-sudo cat /home/rabbitmq/.erlang.cookie     # On both nodes
-sudo cat /root/.erlang.cookie              # On both nodes
+# Reload systemd to recognize the new service file
+echo "🔄 Reloading systemd daemon..."
+sudo systemctl daemon-reload
 
-# Restart RabbitMQ with the new configuration
-sudo systemctl restart rabbitmq-server
+# Create required directories with proper permissions
+echo "🔄 Creating required directories..."
+sudo mkdir -p /var/lib/rabbitmq/mnesia
+sudo mkdir -p /var/log/rabbitmq
+sudo mkdir -p /etc/rabbitmq
+sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
+sudo mkdir -p /home/rabbitmq
 
-# Add this section after line 748 (after "Clean any existing state before starting")
-# Complete cleanup and restart sequence
-echo "🔄 Performing complete cleanup and restart sequence..."
-sudo systemctl stop rabbitmq-server
-sudo rm -rf /var/lib/rabbitmq/mnesia/*
-sudo rm -f /var/log/rabbitmq/*.log
-sudo rm -f /opt/rabbitmq/var/lib/rabbitmq/mnesia/*
+# Set proper ownership
+echo "🔄 Setting directory permissions..."
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
 
-# Verify and fix cookie files with proper permissions
-echo "🔄 Fixing cookie files with proper permissions..."
-sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /var/lib/rabbitmq/.erlang.cookie'
-sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /root/.erlang.cookie'
-sudo bash -c 'echo "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890" > /home/rabbitmq/.erlang.cookie'
+# Create and set Erlang cookie
+echo "🔄 Setting up Erlang cookie..."
+echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie > /dev/null
+echo "$RABBITMQ_COOKIE" | sudo tee /root/.erlang.cookie > /dev/null
+echo "$RABBITMQ_COOKIE" | sudo tee /home/rabbitmq/.erlang.cookie > /dev/null
 
 # Set proper permissions for cookie files
 sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
@@ -721,158 +615,22 @@ sudo chmod 400 /home/rabbitmq/.erlang.cookie
 sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
 sudo chown rabbitmq:rabbitmq /home/rabbitmq/.erlang.cookie
 
-# Verify hostname
-echo "🔄 Setting hostname..."
-sudo hostnamectl set-hostname $SHORTNAME
+# Now enable and start the service
+echo "🔄 Starting RabbitMQ service..."
+sudo systemctl enable rabbitmq-server
+sudo systemctl start rabbitmq-server
 
-# Update /etc/hosts with clean entries
-echo "🔄 Updating hosts file..."
-sudo sed -i "/$SHORTNAME/d" /etc/hosts
-sudo sed -i "/master-node/d" /etc/hosts
-sudo sed -i "/worker1/d" /etc/hosts
-sudo sed -i "/worker2/d" /etc/hosts
+# Wait for the service to fully start
+echo "🔄 Waiting for RabbitMQ to start..."
+sleep 30
 
-# Add fresh host entries
-echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
-echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
-echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
-echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
-echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+# Check service status
+echo "🔄 Checking RabbitMQ service status..."
+sudo systemctl status rabbitmq-server
 
-# Continue with the existing script...
-
-# Add after the RabbitMQ service start
-if [ "$NODE_TYPE" != "master" ]; then
-    echo "🔄 Joining cluster as $NODE_TYPE..."
-    
-    # Stop the RabbitMQ application (but not the Erlang node)
-    sudo rabbitmqctl stop_app
-    
-    # Reset the node
-    sudo rabbitmqctl reset
-    
-    # Verify connectivity to master node before joining
-    echo "🔄 Verifying connectivity to master node..."
-    if ! ping -c 3 master-node &>/dev/null; then
-        echo "❌ Cannot reach master node. Check network connectivity."
-        exit 1
-    fi
-
-    # Check if master node is reachable via RabbitMQ
-    if ! sudo rabbitmqctl -n rabbit@master-node status &>/dev/null; then
-        echo "❌ Cannot reach RabbitMQ on master node. Check if RabbitMQ is running on master."
-        exit 1
-    fi
-    
-    # Join the cluster with retry logic
-    MAX_RETRIES=5
-    RETRY_COUNT=0
-    JOINED=false
-    
-    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$JOINED" = false ]; do
-        echo "🔄 Attempting to join cluster (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
-        if sudo rabbitmqctl join_cluster rabbit@master-node; then
-            JOINED=true
-            echo "✅ Successfully joined the cluster"
-        else
-            RETRY_COUNT=$((RETRY_COUNT+1))
-            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⚠️ Join attempt failed, waiting before retry..."
-                sleep 10
-            fi
-        fi
-    done
-    
-    if [ "$JOINED" = false ]; then
-        echo "❌ Failed to join cluster after $MAX_RETRIES attempts"
-        exit 1
-    fi
-    
-    # Start the application
-    sudo rabbitmqctl start_app
-    
-    # Verify cluster status
-    echo "🔄 Verifying cluster status..."
-    sudo rabbitmqctl cluster_status
+# If service failed to start, check logs
+if ! systemctl is-active rabbitmq-server >/dev/null 2>&1; then
+    echo "⚠️ RabbitMQ service failed to start. Checking logs..."
+    sudo journalctl -u rabbitmq-server -n 50
+    exit 1
 fi
-
-# Enable management plugin and other necessary plugins
-echo "🔄 Enabling RabbitMQ plugins..."
-sudo rabbitmq-plugins enable rabbitmq_management
-sudo rabbitmq-plugins enable rabbitmq_management_agent
-sudo rabbitmq-plugins enable rabbitmq_prometheus
-
-# Create admin user and set permissions
-echo "🔄 Setting up admin user..."
-sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" || true
-sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator
-sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"
-
-# Restart RabbitMQ to apply plugin changes
-sudo systemctl restart rabbitmq-server
-
-# Wait for service to fully start
-sleep 15  # Bekleme süresini artıralım
-
-# If this is a worker node, join the cluster
-if [ "$NODE_TYPE" != "master" ]; then
-    echo "🔄 Joining cluster as $NODE_TYPE..."
-    
-    # Stop the RabbitMQ application (but not the Erlang node)
-    sudo rabbitmqctl stop_app
-    
-    # Reset the node
-    sudo rabbitmqctl reset
-    
-    # Verify connectivity to master node before joining
-    echo "🔄 Verifying connectivity to master node..."
-    if ! ping -c 3 master-node &>/dev/null; then
-        echo "❌ Cannot reach master node. Check network connectivity."
-        exit 1
-    fi
-
-    # Check if master node is reachable via RabbitMQ
-    if ! sudo rabbitmqctl -n rabbit@master-node status &>/dev/null; then
-        echo "❌ Cannot reach RabbitMQ on master node. Check if RabbitMQ is running on master."
-        exit 1
-    fi
-    
-    # Join the cluster with retry logic
-    MAX_RETRIES=5
-    RETRY_COUNT=0
-    JOINED=false
-    
-    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$JOINED" = false ]; do
-        echo "🔄 Attempting to join cluster (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
-        if sudo rabbitmqctl join_cluster rabbit@master-node; then
-            JOINED=true
-            echo "✅ Successfully joined the cluster"
-        else
-            RETRY_COUNT=$((RETRY_COUNT+1))
-            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⚠️ Join attempt failed, waiting before retry..."
-                sleep 10
-            fi
-        fi
-    done
-    
-    if [ "$JOINED" = false ]; then
-        echo "❌ Failed to join cluster after $MAX_RETRIES attempts"
-        exit 1
-    fi
-    
-    # Start the application
-    sudo rabbitmqctl start_app
-    
-    # Verify cluster status
-    echo "🔄 Verifying cluster status..."
-    sudo rabbitmqctl cluster_status
-fi
-
-# Final verification of plugins
-echo "🔄 Verifying plugin status..."
-sudo rabbitmq-plugins list
-
-# Final cluster status check
-echo "🔄 Final cluster status check..."
-sudo rabbitmqctl cluster_status
