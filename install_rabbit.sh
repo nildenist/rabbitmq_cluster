@@ -348,6 +348,15 @@ management.tcp.ip = 0.0.0.0
 log.file.level = info
 log.dir = /var/log/rabbitmq
 
+
+# USer
+
+# Create RabbitMQ user first
+echo "🔄 Creating RabbitMQ system user..."
+sudo groupadd -f rabbitmq
+sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
+
+
 # Clustering
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
@@ -495,11 +504,6 @@ fi
 # Verify hosts file
 echo "🔄 Verifying hosts file configuration:"
 cat /etc/hosts
-
-# Create RabbitMQ user first
-echo "🔄 Creating RabbitMQ system user..."
-sudo groupadd -f rabbitmq
-sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
 
 # Create necessary directories first
 echo "🔄 Creating required directories..."
