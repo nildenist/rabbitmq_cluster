@@ -356,25 +356,66 @@ fi
 echo "🔄 Verifying hosts file configuration:"
 cat /etc/hosts
 
-# Create RabbitMQ user if not exists
-sudo useradd -r -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
+# Create RabbitMQ user first
+echo "🔄 Creating RabbitMQ system user..."
+sudo groupadd -f rabbitmq
+sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
 
-# Set up directories and permissions
-sudo mkdir -p /var/lib/rabbitmq/mnesia
+# Create necessary directories first
+echo "🔄 Creating required directories..."
+sudo mkdir -p /var/lib/rabbitmq
 sudo mkdir -p /var/log/rabbitmq
 sudo mkdir -p /etc/rabbitmq
+sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
+sudo mkdir -p /home/rabbitmq
 
-# Stop any existing RabbitMQ process and clean up
+# Set proper ownership
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
+
+# Set hostname first
+echo "🔄 Setting hostname..."
+SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
+sudo hostnamectl set-hostname $SHORTNAME
+
+# Update hosts file before any other operations
+echo "🔄 Updating hosts file..."
+sudo bash -c 'cat > /etc/hosts' << EOF
+127.0.0.1 localhost
+127.0.0.1 $SHORTNAME
+$NODE_IP $SHORTNAME
+$MASTER_IP master-node
+$WORKER_1_IP worker1
+$WORKER_2_IP worker2
+EOF
+
+# Verify hosts file
+echo "🔄 Verifying hosts file configuration:"
+cat /etc/hosts
+
+# Remove any existing service files
+echo "🔄 Cleaning up any existing service files..."
+sudo rm -f /etc/systemd/system/rabbitmq-server.service
+sudo rm -f /lib/systemd/system/rabbitmq-server.service
+sudo systemctl daemon-reload
+
+# Modify the cleanup section
+echo "🔄 Performing cleanup..."
+if systemctl is-active rabbitmq-server &>/dev/null; then
+    sudo systemctl stop rabbitmq-server || true
+fi
 sudo pkill -f rabbitmq || true
-sudo rm -rf /var/lib/rabbitmq/mnesia/*
-sleep 5
+sudo pkill -f beam || true
+sudo pkill -f epmd || true
 
-# Systemd service başlatmadan önce bu değişiklikleri yapalım
-echo "🔄 Performing complete cleanup..."
-sudo systemctl stop rabbitmq-server
-sudo rm -rf /var/lib/rabbitmq/mnesia/*
-sudo rm -f /var/log/rabbitmq/*.log
-sudo rm -f /opt/rabbitmq/var/lib/rabbitmq/mnesia/*
+# Clean up directories
+sudo rm -rf /var/lib/rabbitmq/*
+sudo rm -rf /var/log/rabbitmq/*
+sudo rm -rf /etc/rabbitmq/*
+sudo rm -rf /opt/rabbitmq/var/lib/rabbitmq/mnesia/*
 
 # Erlang cookie'lerini temizle ve yeniden ayarla
 echo "🔄 Setting up Erlang cookies..."
