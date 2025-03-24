@@ -372,7 +372,7 @@ EOF
 sudo chown rabbitmq:rabbitmq /etc/rabbitmq/enabled_plugins
 sudo chmod 644 /etc/rabbitmq/enabled_plugins
 
-# Create systemd service file
+# First, modify the systemd service file
 echo "🔄 Creating systemd service file..."
 sudo tee /etc/systemd/system/rabbitmq-server.service << EOF
 [Unit]
@@ -382,57 +382,83 @@ Wants=network.target epmd@0.0.0.0.socket
 
 [Service]
 Type=notify
+NotifyAccess=all
 User=rabbitmq
 Group=rabbitmq
 UMask=0027
-Environment=HOME=/home/rabbitmq
+SyslogIdentifier=rabbitmq
+LimitNOFILE=65536
+
+Environment=HOME=/var/lib/rabbitmq
 Environment=RABBITMQ_HOME=/opt/rabbitmq
+Environment=RABBITMQ_BASE=/var/lib/rabbitmq
+Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
+Environment=RABBITMQ_MNESIA_BASE=/var/lib/rabbitmq/mnesia
 Environment=RABBITMQ_NODENAME=${NODE_NAME}
 Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
 Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
-Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
-Environment=RABBITMQ_MNESIA_BASE=/var/lib/rabbitmq/mnesia
-Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
 Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=LANG=en_US.UTF-8
 Environment=LC_ALL=en_US.UTF-8
 
-ExecStart=/usr/local/bin/rabbitmq-server
-ExecStop=/usr/local/bin/rabbitmqctl stop
-TimeoutStartSec=600
+ExecStartPre=/bin/mkdir -p /var/lib/rabbitmq/mnesia
+ExecStartPre=/bin/chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+ExecStartPre=/bin/chmod 755 /var/lib/rabbitmq
+
+ExecStart=/opt/rabbitmq/sbin/rabbitmq-server
+ExecStop=/opt/rabbitmq/sbin/rabbitmqctl stop
+
 Restart=on-failure
 RestartSec=10
+TimeoutStartSec=600
+
 WorkingDirectory=/var/lib/rabbitmq
-LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Reload systemd
-echo "🔄 Reloading systemd daemon..."
-sudo systemctl daemon-reload
+# Ensure proper permissions and ownership
+echo "🔄 Setting up permissions..."
+sudo mkdir -p /var/lib/rabbitmq/mnesia
+sudo mkdir -p /var/log/rabbitmq
+sudo mkdir -p /etc/rabbitmq
+sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
 
-# Start RabbitMQ
-echo "🔄 Starting RabbitMQ..."
-sudo systemctl enable rabbitmq-server
-sudo systemctl start rabbitmq-server
+# Set correct ownership
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
+
+# Set correct permissions
+sudo chmod 755 /var/lib/rabbitmq
+sudo chmod 755 /var/log/rabbitmq
+sudo chmod 755 /etc/rabbitmq
+sudo chmod 755 /opt/rabbitmq
+
+# Reload systemd and restart RabbitMQ
+echo "🔄 Reloading systemd and restarting RabbitMQ..."
+sudo systemctl daemon-reload
+sudo systemctl restart rabbitmq-server
 
 # Wait for service to start
 echo "🔄 Waiting for RabbitMQ to start..."
 sleep 30
 
-# Check service status and logs if failed
+# Check service status
+echo "🔄 Checking service status..."
+sudo systemctl status rabbitmq-server
+
+# If service failed, check logs
 if ! systemctl is-active rabbitmq-server >/dev/null 2>&1; then
     echo "⚠️ RabbitMQ failed to start. Checking logs..."
     sudo journalctl -u rabbitmq-server -n 50
     echo "🔍 Checking RabbitMQ log file..."
     sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log 2>/dev/null
-    exit 1
 fi
-
-echo "✅ RabbitMQ service started successfully!"
 
 # Set environment variables
 echo "🔄 Setting up RabbitMQ environment..."
