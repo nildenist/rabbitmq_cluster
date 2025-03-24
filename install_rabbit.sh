@@ -320,6 +320,120 @@ sudo ln -sf /opt/rabbitmq/sbin/rabbitmq-plugins /usr/local/bin/rabbitmq-plugins
 # Clean up downloaded files
 rm -f rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
 
+# After RabbitMQ installation and before service setup
+echo "🔄 Setting up RabbitMQ..."
+
+# Create RabbitMQ configuration directory
+sudo mkdir -p /etc/rabbitmq
+
+# Create rabbitmq-env.conf
+echo "🔄 Creating RabbitMQ environment configuration..."
+sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
+NODENAME=${NODE_NAME}
+NODE_IP_ADDRESS=${NODE_IP}
+NODE_PORT=${RABBITMQ_PORT}
+RABBITMQ_BASE=/var/lib/rabbitmq
+RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+RABBITMQ_LOG_BASE=/var/log/rabbitmq
+EOF
+
+# Create rabbitmq.conf
+echo "🔄 Creating RabbitMQ main configuration..."
+sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
+listeners.tcp.default = ${RABBITMQ_PORT}
+management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
+management.tcp.ip = 0.0.0.0
+
+# Logging
+log.file.level = info
+log.dir = /var/log/rabbitmq
+
+# Clustering
+cluster_partition_handling = ignore
+cluster_formation.peer_discovery_backend = classic_config
+EOF
+
+if [ "$NODE_TYPE" == "master" ]; then
+    echo "cluster_formation.classic_config.nodes.1 = ${NODE_NAME}" | sudo tee -a /etc/rabbitmq/rabbitmq.conf
+else
+    echo "cluster_formation.classic_config.nodes.1 = rabbit@master-node" | sudo tee -a /etc/rabbitmq/rabbitmq.conf
+fi
+
+# Set proper permissions for config files
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chmod 644 /etc/rabbitmq/rabbitmq.conf
+sudo chmod 644 /etc/rabbitmq/rabbitmq-env.conf
+
+# Create enabled_plugins file
+echo "🔄 Creating enabled_plugins file..."
+sudo tee /etc/rabbitmq/enabled_plugins << EOF
+[rabbitmq_management,rabbitmq_management_agent,rabbitmq_prometheus].
+EOF
+sudo chown rabbitmq:rabbitmq /etc/rabbitmq/enabled_plugins
+sudo chmod 644 /etc/rabbitmq/enabled_plugins
+
+# Create systemd service file
+echo "🔄 Creating systemd service file..."
+sudo tee /etc/systemd/system/rabbitmq-server.service << EOF
+[Unit]
+Description=RabbitMQ Server
+After=network.target epmd@0.0.0.0.socket
+Wants=network.target epmd@0.0.0.0.socket
+
+[Service]
+Type=notify
+User=rabbitmq
+Group=rabbitmq
+UMask=0027
+Environment=HOME=/home/rabbitmq
+Environment=RABBITMQ_HOME=/opt/rabbitmq
+Environment=RABBITMQ_NODENAME=${NODE_NAME}
+Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
+Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
+Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
+Environment=RABBITMQ_MNESIA_BASE=/var/lib/rabbitmq/mnesia
+Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
+Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LANG=en_US.UTF-8
+Environment=LC_ALL=en_US.UTF-8
+
+ExecStart=/usr/local/bin/rabbitmq-server
+ExecStop=/usr/local/bin/rabbitmqctl stop
+TimeoutStartSec=600
+Restart=on-failure
+RestartSec=10
+WorkingDirectory=/var/lib/rabbitmq
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd
+echo "🔄 Reloading systemd daemon..."
+sudo systemctl daemon-reload
+
+# Start RabbitMQ
+echo "🔄 Starting RabbitMQ..."
+sudo systemctl enable rabbitmq-server
+sudo systemctl start rabbitmq-server
+
+# Wait for service to start
+echo "🔄 Waiting for RabbitMQ to start..."
+sleep 30
+
+# Check service status and logs if failed
+if ! systemctl is-active rabbitmq-server >/dev/null 2>&1; then
+    echo "⚠️ RabbitMQ failed to start. Checking logs..."
+    sudo journalctl -u rabbitmq-server -n 50
+    echo "🔍 Checking RabbitMQ log file..."
+    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log 2>/dev/null
+    exit 1
+fi
+
+echo "✅ RabbitMQ service started successfully!"
+
 # Set environment variables
 echo "🔄 Setting up RabbitMQ environment..."
 sudo mkdir -p /etc/rabbitmq
@@ -541,96 +655,5 @@ if [ "$(sudo cat /var/lib/rabbitmq/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; the
 fi
 if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     echo "❌ Cookie mismatch in /root/.erlang.cookie"
-    exit 1
-fi
-
-# First, create the systemd service file
-echo "🔄 Creating RabbitMQ systemd service..."
-cat << EOF | sudo tee /etc/systemd/system/rabbitmq-server.service
-[Unit]
-Description=RabbitMQ Server
-After=network.target epmd@0.0.0.0.socket
-Wants=network.target epmd@0.0.0.0.socket
-
-[Service]
-Type=notify
-User=rabbitmq
-Group=rabbitmq
-UMask=0027
-Environment=HOME=/home/rabbitmq
-Environment=RABBITMQ_HOME=/opt/rabbitmq
-Environment=RABBITMQ_NODENAME=${NODE_NAME}
-Environment=RABBITMQ_NODE_IP_ADDRESS=${NODE_IP}
-Environment=RABBITMQ_NODE_PORT=${RABBITMQ_PORT}
-Environment=RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-Environment=RABBITMQ_LOG_BASE=/var/log/rabbitmq
-Environment=RABBITMQ_MNESIA_BASE=/opt/rabbitmq/var/lib/rabbitmq/mnesia
-Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-Environment=PATH=/opt/rabbitmq/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=LANG=en_US.UTF-8
-Environment=LC_ALL=en_US.UTF-8
-
-ExecStart=/opt/rabbitmq/sbin/rabbitmq-server
-ExecStop=/opt/rabbitmq/sbin/rabbitmqctl stop
-TimeoutStartSec=600
-Restart=on-failure
-RestartSec=10
-WorkingDirectory=/var/lib/rabbitmq
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Reload systemd to recognize the new service file
-echo "🔄 Reloading systemd daemon..."
-sudo systemctl daemon-reload
-
-# Create required directories with proper permissions
-echo "🔄 Creating required directories..."
-sudo mkdir -p /var/lib/rabbitmq/mnesia
-sudo mkdir -p /var/log/rabbitmq
-sudo mkdir -p /etc/rabbitmq
-sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
-sudo mkdir -p /home/rabbitmq
-
-# Set proper ownership
-echo "🔄 Setting directory permissions..."
-sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
-
-# Create and set Erlang cookie
-echo "🔄 Setting up Erlang cookie..."
-echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie > /dev/null
-echo "$RABBITMQ_COOKIE" | sudo tee /root/.erlang.cookie > /dev/null
-echo "$RABBITMQ_COOKIE" | sudo tee /home/rabbitmq/.erlang.cookie > /dev/null
-
-# Set proper permissions for cookie files
-sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
-sudo chmod 400 /root/.erlang.cookie
-sudo chmod 400 /home/rabbitmq/.erlang.cookie
-sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
-sudo chown rabbitmq:rabbitmq /home/rabbitmq/.erlang.cookie
-
-# Now enable and start the service
-echo "🔄 Starting RabbitMQ service..."
-sudo systemctl enable rabbitmq-server
-sudo systemctl start rabbitmq-server
-
-# Wait for the service to fully start
-echo "🔄 Waiting for RabbitMQ to start..."
-sleep 30
-
-# Check service status
-echo "🔄 Checking RabbitMQ service status..."
-sudo systemctl status rabbitmq-server
-
-# If service failed to start, check logs
-if ! systemctl is-active rabbitmq-server >/dev/null 2>&1; then
-    echo "⚠️ RabbitMQ service failed to start. Checking logs..."
-    sudo journalctl -u rabbitmq-server -n 50
     exit 1
 fi
