@@ -503,13 +503,13 @@ sudo mkdir -p /etc/rabbitmq
 SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
 sudo hostnamectl set-hostname $SHORTNAME
 
-# Add this section right after loading environment variables (around line 4)
+# Add this section right after 'source rabbit.env'
 echo "🔄 Setting up hosts file..."
 # Backup original hosts file
 sudo cp /etc/hosts /etc/hosts.backup
 
 # Create new hosts file with required entries
-sudo bash -c 'cat > /etc/hosts' << EOF
+sudo bash -c "cat > /etc/hosts" << EOF
 # IPv4 definitions
 127.0.0.1 localhost
 127.0.0.1 ${SHORTNAME}
@@ -523,6 +523,7 @@ ${WORKER_2_IP} worker2
 fe00::0 ip6-localnet
 ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
+169.254.169.254 metadata.google.internal metadata
 EOF
 
 # Verify the hosts file
@@ -532,8 +533,8 @@ cat /etc/hosts
 # Test hostname resolution
 echo "🔄 Testing hostname resolution..."
 if ! ping -c 1 master-node &>/dev/null; then
-    echo "⚠️ Warning: Unable to resolve master-node"
-    exit 1
+    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
+    echo "${MASTER_IP} master-node" | sudo tee -a /etc/hosts
 fi
 
 # Create necessary directories first
