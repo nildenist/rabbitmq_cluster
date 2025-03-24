@@ -380,24 +380,14 @@ listeners.tcp.default = ${RABBITMQ_PORT}
 management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.tcp.ip = 0.0.0.0
 
-# Logging
 log.file.level = info
 log.dir = /var/log/rabbitmq
 
-
-# USer
-
-# Create RabbitMQ user first
-echo "🔄 Creating RabbitMQ system user..."
-sudo groupadd -f rabbitmq
-sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq || true
-
-
-# Clustering
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
 EOF
 
+# Add node-specific configuration
 if [ "$NODE_TYPE" == "master" ]; then
     echo "cluster_formation.classic_config.nodes.1 = ${NODE_NAME}" | sudo tee -a /etc/rabbitmq/rabbitmq.conf
 else
