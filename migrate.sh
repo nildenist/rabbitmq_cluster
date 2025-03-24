@@ -2,86 +2,89 @@
 
 set -e
 
-# migrate.env dosyasını içe aktar
-if [ ! -f migrate.env ]; then
-  echo "❌ migrate.env dosyası bulunamadı!"
+# ENV dosyasını yükle
+if [ ! -f "migrate.env" ]; then
+  echo "❌ migrate.env dosyası bulunamadı."
   exit 1
 fi
 
 source migrate.env
 
-# Gereksinimleri kontrol et
-echo "🔍 jq kontrol ediliyor..."
-if ! command -v jq &> /dev/null; then
-    echo "📦 jq yükleniyor..."
-    sudo apt update && sudo apt install jq -y
+# jq kontrolü
+if ! command -v jq >/dev/null 2>&1; then
+  echo "❌ jq yüklü değil. Kurmak için:"
+  echo "   sudo apt install jq -y"
+  exit 1
 fi
 
-# Shovel için management API URL'leri
-OLD_API="http://${OLD_RABBITMQ_HOST}:15672/api"
-NEW_API="http://${NEW_RABBITMQ_HOST}:15672/api"
+MODE=$1
 
-# Management plugin yüklü mü kontrol et (yeni cluster)
-echo "🔍 Management Plugin kontrol ediliyor (yeni cluster)..."
-if ! rabbitmq-plugins list -e | grep rabbitmq_management &> /dev/null; then
-    echo "⚙️ Management Plugin yükleniyor..."
-    sudo rabbitmq-plugins enable rabbitmq_management
-    sudo systemctl restart rabbitmq-server
-    sleep 5
+if [ "$MODE" != "source" ] && [ "$MODE" != "target" ]; then
+  echo "❌ Kullanım: ./migrate.sh [source|target]"
+  exit 1
 fi
 
-# Shovel plugin yüklü mü kontrol et
-echo "🔍 Shovel Plugin kontrol ediliyor (yeni cluster)..."
-if ! rabbitmq-plugins list -e | grep rabbitmq_shovel &> /dev/null; then
-    echo "⚙️ Shovel Plugin yükleniyor..."
-    sudo rabbitmq-plugins enable rabbitmq_shovel rabbitmq_shovel_management
-    sudo systemctl restart rabbitmq-server
-    sleep 5
-fi
+# Plugin kontrol fonksiyonu
+enable_plugins() {
+  local HOST=$1
+  local USER=$2
+  local PASSWORD=$3
 
-# Eski cluster'dan definitions.json al
-echo "⬇️ Eski cluster'dan definitions.json alınıyor..."
-curl -u "$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD" \
-     -o "$TMP_FILE" \
-     "$OLD_API/definitions"
-
-if [ ! -f "$TMP_FILE" ]; then
-    echo "❌ Definitions dosyası alınamadı."
+  echo "🔍 $HOST sunucusunda eklentiler kontrol ediliyor..."
+  curl -s -u "$USER:$PASSWORD" http://$HOST:15672/api/overview >/dev/null || {
+    echo "❌ $HOST erişilemedi veya kullanıcı bilgileri hatalı"
     exit 1
+  }
+
+  echo "✅ $HOST erişimi başarılı, eklentiler etkinleştiriliyor..."
+  sudo rabbitmq-plugins enable rabbitmq_shovel rabbitmq_shovel_management rabbitmq_management || true
+  sudo systemctl restart rabbitmq-server
+  sleep 5
+}
+
+if [ "$MODE" == "source" ]; then
+  echo "🚀 Kaynak sunucu işlemleri başlatılıyor..."
+  enable_plugins "$OLD_RABBITMQ_HOST" "$OLD_RABBITMQ_USER" "$OLD_RABBITMQ_PASSWORD"
+  echo "✅ Kaynak sunucuda Shovel ve Management plugin etkinleştirildi."
+  exit 0
 fi
 
-# Virtual host'ları al
-vhosts=$(jq -r '.vhosts[].name' "$TMP_FILE")
+if [ "$MODE" == "target" ]; then
+  echo "🚀 Hedef sunucu işlemleri başlatılıyor..."
+  enable_plugins "$NEW_RABBITMQ_HOST" "$NEW_RABBITMQ_USER" "$NEW_RABBITMQ_PASSWORD"
 
-for vhost in $vhosts; do
-    echo "🔁 VHost işleniyor: $vhost"
+  echo "📥 Kaynak tanımlar alınıyor: $TMP_FILE"
+  curl -u "$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD" -o "$TMP_FILE" \
+    "http://$OLD_RABBITMQ_HOST:15672/api/definitions" || {
+    echo "❌ Tanımlar alınamadı!"
+    exit 1
+  }
 
-    # Shovel policy ayarlarını oku
-    policies=$(jq -c --arg vhost "$vhost" '.policies[] | select(.vhost == $vhost and .definition."shovels")' "$TMP_FILE")
+  # shovel tanımı ekleyelim
+  echo "🔧 Shovel tanımı oluşturuluyor..."
 
-    if [ -z "$policies" ]; then
-        echo "⚠️  $vhost için Shovel policy bulunamadı. Atlanıyor."
-        continue
-    fi
+  read -r -d '' SHOVEL_JSON << EOM
+{
+  "component": "shovel",
+  "name": "shovel_migration",
+  "value": {
+    "src-uri": "amqp://$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD@$OLD_RABBITMQ_HOST",
+    "src-queue": "my_queue",
+    "dest-uri": "amqp://$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD@$NEW_RABBITMQ_HOST",
+    "dest-queue": "my_queue",
+    "ack-mode": "on-confirm",
+    "delete-after": "never"
+  },
+  "vhost": "/"
+}
+EOM
 
-    while IFS= read -r policy; do
-        name=$(echo "$policy" | jq -r '.name')
-        definition=$(echo "$policy" | jq -c '.definition')
+  echo "$SHOVEL_JSON" | jq '.' > shovel_definition.json
 
-        echo "🚀 Shovel policy uygulanıyor: $name"
+  echo "🚀 Shovel tanımı hedef sunucuya uygulanıyor..."
+  curl -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD" -H "content-type: application/json" \
+    -X PUT -d @"shovel_definition.json" \
+    http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2F/shovel_migration
 
-        curl -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD" \
-             -H "Content-Type: application/json" \
-             -X PUT "$NEW_API/policies/$vhost/$name" \
-             -d "{
-                   \"pattern\": \"\",
-                   \"definition\": $definition,
-                   \"priority\": 0,
-                   \"apply-to\": \"all\"
-                 }"
-
-    done <<< "$policies"
-
-done
-
-echo "✅ Migration ve CDC (Shovel) yapılandırması tamamlandı!"
+  echo "✅ Shovel kurulumu tamamlandı. CDC başlatıldı."
+fi
