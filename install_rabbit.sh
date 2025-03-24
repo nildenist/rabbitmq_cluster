@@ -508,38 +508,15 @@ sudo chmod 755 /var/log/rabbitmq
 sudo chmod 755 /etc/rabbitmq
 sudo chmod 755 /opt/rabbitmq
 
-# Reload systemd and restart RabbitMQ
-echo "🔄 Reloading systemd and restarting RabbitMQ..."
-sudo systemctl daemon-reload
-sudo systemctl restart rabbitmq-server
+# Ensure clean state and proper permissions
+echo "🔄 Preparing RabbitMQ directories and permissions..."
+sudo systemctl stop rabbitmq-server || true
+sudo rm -rf /var/lib/rabbitmq/mnesia/*
 
-# Wait for service to start
-echo "🔄 Waiting for RabbitMQ to start..."
-sleep 30
-
-# Check service status
-echo "🔄 Checking service status..."
-sudo systemctl status rabbitmq-server
-
-# If service failed, check logs
-if ! systemctl is-active rabbitmq-server >/dev/null 2>&1; then
-    echo "⚠️ RabbitMQ failed to start. Checking logs..."
-    sudo journalctl -u rabbitmq-server -n 50
-    echo "🔍 Checking RabbitMQ log file..."
-    sudo tail -n 50 /var/log/rabbitmq/rabbit@${SHORTNAME}.log 2>/dev/null
-fi
-
-# Set environment variables
-echo "🔄 Setting up RabbitMQ environment..."
-sudo mkdir -p /etc/rabbitmq
-
-# Set the hostname to match the node name
-SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
-sudo hostnamectl set-hostname $SHORTNAME
-
-# Erlang cookie'lerini temizle ve yeniden ayarla
-echo "🔄 Setting up Erlang cookies..."
+# Set up Erlang cookie with proper permissions
+echo "🔄 Setting up Erlang cookie..."
 for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/rabbitmq/.erlang.cookie; do
+    sudo rm -f "$COOKIE_PATH"
     echo "$RABBITMQ_COOKIE" | sudo tee "$COOKIE_PATH" > /dev/null
     sudo chmod 400 "$COOKIE_PATH"
     if [[ "$COOKIE_PATH" == "/var/lib/rabbitmq/.erlang.cookie" ]] || [[ "$COOKIE_PATH" == "/home/rabbitmq/.erlang.cookie" ]]; then
@@ -547,57 +524,58 @@ for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/r
     fi
 done
 
-# Hostname ve hosts dosyasını ayarla
-echo "🔄 Setting up hostname and hosts..."
-SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
+# Verify cookie files
+echo "🔄 Verifying cookie files..."
+for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/rabbitmq/.erlang.cookie; do
+    if [ "$(sudo cat $COOKIE_PATH)" != "$RABBITMQ_COOKIE" ]; then
+        echo "❌ Cookie mismatch in $COOKIE_PATH"
+        exit 1
+    fi
+done
 
-# Set hostname first
-sudo hostnamectl set-hostname $SHORTNAME
-
-# Update hosts file with proper configuration
-sudo bash -c "cat > /etc/hosts" << EOF
-127.0.0.1 localhost
-127.0.0.1 $SHORTNAME
-$NODE_IP $SHORTNAME
-$MASTER_IP master-node
-$WORKER_1_IP worker1
-$WORKER_2_IP worker2
-EOF
-
-# Verify the hosts file
-echo "🔄 Verifying hosts file configuration:"
-cat /etc/hosts
-
-# Test hostname resolution
-echo "🔄 Testing hostname resolution..."
-if ! ping -c 1 master-node &>/dev/null; then
-    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
-    echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
-fi
-
-if ! ping -c 1 $SHORTNAME &>/dev/null; then
-    echo "⚠️ Warning: Unable to resolve $SHORTNAME. Adding explicit IP mapping..."
-    echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
-fi
-
-# RabbitMQ servisini başlat
+# Start RabbitMQ with proper delay
+echo "🔄 Starting RabbitMQ..."
 sudo systemctl daemon-reload
 sudo systemctl restart rabbitmq-server
+echo "🔄 Waiting for RabbitMQ to fully start..."
+sleep 30
 
-# Servisin başlaması için bekle
-sleep 15
+# Set up admin user
+echo "🔄 Setting up admin user..."
+MAX_RETRIES=5
+RETRY_COUNT=0
+SUCCESS=false
 
-# Plugin'leri etkinleştir
-echo "🔄 Enabling plugins..."
-sudo rabbitmq-plugins enable rabbitmq_management
-sudo rabbitmq-plugins enable rabbitmq_management_agent
-sudo rabbitmq-plugins enable rabbitmq_prometheus
+while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
+    echo "🔄 Attempting to create admin user (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+    if sudo rabbitmqctl list_users >/dev/null 2>&1; then
+        sudo rabbitmqctl delete_user "$RABBITMQ_ADMIN_USER" || true
+        if sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" && \
+           sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator && \
+           sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*" && \
+           sudo rabbitmqctl delete_user guest || true; then
+            SUCCESS=true
+            echo "✅ Successfully created admin user"
+        fi
+    else
+        RETRY_COUNT=$((RETRY_COUNT+1))
+        echo "⚠️ RabbitMQ not ready yet, waiting before retry..."
+        sleep 10
+    fi
+done
 
-# Admin kullanıcısını oluştur
-echo "🔄 Creating admin user..."
-sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" || true
-sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator
-sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"
+if [ "$SUCCESS" = false ]; then
+    echo "❌ Failed to create admin user after $MAX_RETRIES attempts"
+    echo "🔍 Checking RabbitMQ status and logs..."
+    sudo systemctl status rabbitmq-server
+    sudo journalctl -u rabbitmq-server -n 50
+    exit 1
+fi
+
+# Verify the setup
+echo "🔄 Verifying setup..."
+sudo rabbitmqctl status
+sudo rabbitmqctl list_users
 
 # Worker node ise cluster'a katıl
 if [ "$NODE_TYPE" != "master" ]; then
