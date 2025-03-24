@@ -3,6 +3,40 @@
 set -e  # Hata yakalama
 source rabbit.env  # rabbitmq.env dosyasını yükle
 
+# Add this section right after line 4 (after source rabbit.env)
+echo "🔄 Setting up hosts file..."
+# Backup original hosts file
+sudo cp /etc/hosts /etc/hosts.backup
+
+# Create new hosts file with required entries
+sudo bash -c "cat > /etc/hosts" << EOF
+# IPv4 definitions
+127.0.0.1 localhost
+127.0.0.1 ${SHORTNAME}
+${NODE_IP} ${SHORTNAME}
+${MASTER_IP} master-node
+${WORKER_1_IP} worker1
+${WORKER_2_IP} worker2
+
+# IPv6 definitions
+::1 ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+169.254.169.254 metadata.google.internal metadata
+EOF
+
+# Verify the hosts file
+echo "🔄 Verifying hosts file configuration:"
+cat /etc/hosts
+
+# Test hostname resolution
+echo "🔄 Testing hostname resolution..."
+if ! ping -c 1 master-node &>/dev/null; then
+    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
+    echo "${MASTER_IP} master-node" | sudo tee -a /etc/hosts
+fi
+
 # Create RabbitMQ system user and group first
 echo "🔄 Creating RabbitMQ system user and group..."
 # Create rabbitmq group if it doesn't exist
@@ -502,96 +536,6 @@ sudo mkdir -p /etc/rabbitmq
 # Set the hostname to match the node name
 SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
 sudo hostnamectl set-hostname $SHORTNAME
-
-# Add this section right after 'source rabbit.env'
-echo "🔄 Setting up hosts file..."
-# Backup original hosts file
-sudo cp /etc/hosts /etc/hosts.backup
-
-# Create new hosts file with required entries
-sudo bash -c "cat > /etc/hosts" << EOF
-# IPv4 definitions
-127.0.0.1 localhost
-127.0.0.1 ${SHORTNAME}
-${NODE_IP} ${SHORTNAME}
-${MASTER_IP} master-node
-${WORKER_1_IP} worker1
-${WORKER_2_IP} worker2
-
-# IPv6 definitions
-::1 ip6-localhost ip6-loopback
-fe00::0 ip6-localnet
-ff02::1 ip6-allnodes
-ff02::2 ip6-allrouters
-169.254.169.254 metadata.google.internal metadata
-EOF
-
-# Verify the hosts file
-echo "🔄 Verifying hosts file configuration:"
-cat /etc/hosts
-
-# Test hostname resolution
-echo "🔄 Testing hostname resolution..."
-if ! ping -c 1 master-node &>/dev/null; then
-    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
-    echo "${MASTER_IP} master-node" | sudo tee -a /etc/hosts
-fi
-
-# Create necessary directories first
-echo "🔄 Creating required directories..."
-sudo mkdir -p /var/lib/rabbitmq
-sudo mkdir -p /var/log/rabbitmq
-sudo mkdir -p /etc/rabbitmq
-sudo mkdir -p /opt/rabbitmq/var/lib/rabbitmq/mnesia
-sudo mkdir -p /home/rabbitmq
-
-# Set proper ownership
-sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /opt/rabbitmq
-sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
-
-# Set hostname first
-echo "🔄 Setting hostname..."
-SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
-sudo hostnamectl set-hostname $SHORTNAME
-
-# Update hosts file before any other operations
-echo "🔄 Updating hosts file..."
-sudo bash -c 'cat > /etc/hosts' << EOF
-127.0.0.1 localhost
-127.0.0.1 $SHORTNAME
-$NODE_IP $SHORTNAME
-$MASTER_IP master-node
-$WORKER_1_IP worker1
-$WORKER_2_IP worker2
-EOF
-
-# Verify hosts file
-echo "🔄 Verifying hosts file configuration:"
-cat /etc/hosts
-
-# Remove any existing service files
-echo "🔄 Cleaning up any existing service files..."
-sudo rm -f /etc/systemd/system/rabbitmq-server.service
-sudo rm -f /lib/systemd/system/rabbitmq-server.service
-sudo systemctl daemon-reload
-
-# Modify the cleanup section
-echo "🔄 Performing cleanup..."
-if systemctl is-active rabbitmq-server &>/dev/null; then
-    sudo systemctl stop rabbitmq-server || true
-fi
-sudo pkill -f rabbitmq || true
-sudo pkill -f beam || true
-sudo pkill -f epmd || true
-
-# Clean up directories
-sudo rm -rf /var/lib/rabbitmq/*
-sudo rm -rf /var/log/rabbitmq/*
-sudo rm -rf /etc/rabbitmq/*
-sudo rm -rf /opt/rabbitmq/var/lib/rabbitmq/mnesia/*
 
 # Erlang cookie'lerini temizle ve yeniden ayarla
 echo "🔄 Setting up Erlang cookies..."
