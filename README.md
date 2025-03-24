@@ -163,3 +163,159 @@ Access the RabbitMQ Management UI:
 URL: http://<master-ip>:15672
 Username: <configured-admin-user>
 Password: <configured-admin-password>
+
+## Data Migration with Shovel
+
+The project includes support for data migration between RabbitMQ clusters using the Shovel plugin. The `migrate.sh` script automates the setup of Shovel connections between source and target clusters.
+
+### Migration Configuration
+
+Create or modify `migrate.env` with your migration settings:
+
+```env
+# Source (Old) RabbitMQ Instance
+OLD_RABBITMQ_HOST="10.128.0.43"
+OLD_RABBITMQ_USER="admin"
+OLD_RABBITMQ_PASSWORD="oldpassword"
+
+# Target (New) RabbitMQ Instance
+NEW_RABBITMQ_HOST="localhost"
+NEW_RABBITMQ_USER="admin"
+NEW_RABBITMQ_PASSWORD="secretsecret"
+
+# Temporary file for definitions
+TMP_FILE="definitions.json"
+```
+
+### Migration Process
+
+The migration process uses RabbitMQ's Shovel plugin to reliably transfer messages between clusters. The process involves two steps:
+
+1. **Source Cluster Setup**:
+```bash
+# Enable Shovel plugin on source cluster
+./migrate.sh source
+```
+This command:
+- Enables the Shovel plugin on the source cluster
+- Verifies plugin activation
+- Configures source cluster for migration
+
+2. **Target Cluster Setup**:
+```bash
+# Configure and start migration on target cluster
+./migrate.sh target
+```
+This command:
+- Sets up Shovel connections on the target cluster
+- Configures message transfer parameters
+- Starts the migration process
+
+### Migration Verification
+
+After running the migration script:
+
+1. Check Shovel Status:
+   - Access Management UI > Admin > Shovel Status
+   - Verify all Shovel connections show "running"
+
+2. Monitor Message Transfer:
+   - Watch queue depths in both clusters
+   - Check Shovel rates in Management UI
+   - Verify message integrity
+
+### Troubleshooting Migration
+
+Common migration issues and solutions:
+
+- **Plugin Activation Failed**: 
+  - Verify Shovel plugin is enabled: `rabbitmq-plugins list`
+  - Check plugin compatibility with RabbitMQ version
+
+- **Connection Issues**:
+  - Ensure network connectivity between clusters
+  - Verify credentials in migrate.env
+  - Check firewall rules for required ports
+
+- **Performance Issues**:
+  - Monitor system resources
+  - Adjust Shovel concurrency settings if needed
+  - Check network bandwidth between clusters
+
+### Migration Limitations
+
+- Shovel transfers messages in one direction only
+- Queue bindings and exchanges must be recreated on target
+- Consider message ordering requirements
+- Plan for potential network interruptions
+
+## Test Utilities
+
+The project includes test utilities to verify your RabbitMQ cluster setup.
+
+### Publisher (publisher.js)
+
+A test script to publish messages to your RabbitMQ cluster.
+
+```javascript
+const connection = await amqp.connect('amqp://admin:secret@10.128.0.37');
+```
+
+⚠️ **Important**: Before running the publisher:
+- Update the connection string with your RabbitMQ credentials
+- Change the IP address to your master node's IP
+- Verify the admin user and password match your configuration
+
+To run the publisher:
+```bash
+npm install
+node publisher.js
+```
+
+The publisher will:
+- Create a test queue if it doesn't exist
+- Send 500 test messages
+- Log each message sent
+- Wait 1 second between messages
+
+### Worker (worker.js)
+
+A consumer script designed to run on worker nodes to process messages.
+
+```javascript
+const connection = await amqp.connect('amqp://localhost');
+```
+
+The worker:
+- Connects to the local RabbitMQ instance
+- Processes messages one at a time (prefetch=1)
+- Simulates processing with a 2-second delay
+- Acknowledges messages after processing
+
+To run the worker on any node:
+```bash
+npm install
+node worker.js
+```
+
+### Testing the Cluster
+
+1. Start workers on different nodes:
+```bash
+# On worker1
+node worker.js
+
+# On worker2
+node worker.js
+```
+
+2. Run the publisher to send test messages:
+```bash
+# On master node or any client machine
+node publisher.js
+```
+
+3. Monitor the distribution:
+- Check worker logs to see message processing
+- Use Management UI to monitor queue depths
+- Verify message distribution across workers
