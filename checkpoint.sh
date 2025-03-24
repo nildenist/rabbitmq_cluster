@@ -1,58 +1,92 @@
 #!/bin/bash
 
-# Create backup directory with timestamp
-BACKUP_DIR="rabbitmq_backup_$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$BACKUP_DIR"
+set -e
 
-# Backup install_rabbit.sh
-cp install_rabbit.sh "$BACKUP_DIR/install_rabbit.sh"
+# ENV dosyasını yükle
+if [ ! -f "migrate.env" ]; then
+  echo "❌ migrate.env dosyası bulunamadı."
+  exit 1
+fi
 
-# Backup rabbit.env
-cp rabbit.env "$BACKUP_DIR/rabbit.env"
+source migrate.env
 
-# Create a README with checkpoint information
-cat > "$BACKUP_DIR/README.md" << EOF
-# RabbitMQ Installation Checkpoint
-Created: $(date)
+# jq kontrolü ve kurulum
+if ! command -v jq >/dev/null 2>&1; then
+  echo "🔧 jq yükleniyor..."
+  sudo apt update && sudo apt install -y jq
+fi
 
-## Files Backed Up
-- install_rabbit.sh
-- rabbit.env
+MODE=$1
 
-## Current Working State
-- RabbitMQ installation script with English messages
-- Proper systemd service configuration
-- Complete cleanup and restart sequence
-- Proper cookie file handling
-- Cluster join functionality with retry mechanism
-- Plugin management
-- Admin user creation
+if [ "$MODE" != "source" ] && [ "$MODE" != "target" ]; then
+  echo "❌ Kullanım: ./migrate.sh [source|target]"
+  exit 1
+fi
 
-## To Restore
-To restore this checkpoint:
-1. Copy install_rabbit.sh back to your working directory:
-   cp $BACKUP_DIR/install_rabbit.sh ./install_rabbit.sh
+# Plugin kontrol fonksiyonu
+enable_plugins() {
+  local HOST=$1
+  local USER=$2
+  local PASSWORD=$3
 
-2. Copy rabbit.env back to your working directory:
-   cp $BACKUP_DIR/rabbit.env ./rabbit.env
+  echo "🔍 $HOST sunucusunda eklentiler kontrol ediliyor..."
+  curl -s -u "$USER:$PASSWORD" http://$HOST:15672/api/overview >/dev/null || {
+    echo "❌ $HOST erişilemedi veya kullanıcı bilgileri hatalı"
+    exit 1
+  }
 
-## Verification Steps
-After restoration, verify:
-1. File permissions are correct
-2. Scripts are executable
-3. Environment variables are properly set
+  echo "✅ $HOST erişimi başarılı, eklentiler etkinleştiriliyor..."
+  sudo rabbitmq-plugins enable rabbitmq_shovel rabbitmq_shovel_management rabbitmq_management || true
+  sudo systemctl restart rabbitmq-server
+  sleep 5
+}
 
-## Notes
-- This checkpoint represents a working state of the RabbitMQ cluster setup
-- All messages have been converted to English
-- The script includes proper error handling and retry mechanisms
-EOF
+if [ "$MODE" == "source" ]; then
+  echo "🚀 Kaynak sunucu işlemleri başlatılıyor..."
+  enable_plugins "$OLD_RABBITMQ_HOST" "$OLD_RABBITMQ_USER" "$OLD_RABBITMQ_PASSWORD"
+  echo "✅ Kaynak sunucuda Shovel ve Management plugin etkinleştirildi."
+  exit 0
+fi
 
-# Set proper permissions
-chmod 644 "$BACKUP_DIR/rabbit.env"
-chmod 755 "$BACKUP_DIR/install_rabbit.sh"
+if [ "$MODE" == "target" ]; then
+  echo "🚀 Hedef sunucu işlemleri başlatılıyor..."
+  enable_plugins "$NEW_RABBITMQ_HOST" "$NEW_RABBITMQ_USER" "$NEW_RABBITMQ_PASSWORD"
 
-echo "✅ Checkpoint created in directory: $BACKUP_DIR"
-echo "📝 To restore this checkpoint later, use:"
-echo "   cp $BACKUP_DIR/install_rabbit.sh ./install_rabbit.sh"
-echo "   cp $BACKUP_DIR/rabbit.env ./rabbit.env" 
+  echo "📥 Kaynak tanımlar alınıyor: $TMP_FILE"
+  curl -u "$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD" -o "$TMP_FILE"     "http://$OLD_RABBITMQ_HOST:15672/api/definitions" || {
+    echo "❌ Tanımlar alınamadı!"
+    exit 1
+  }
+
+  echo "🔧 Shovel tanımı oluşturuluyor..."
+  SHOVEL_JSON=$(printf '{
+    "component": "shovel",
+    "name": "shovel_migration",
+    "value": {
+      "src-uri": "amqp://%s:%s@%s",
+      "src-queue": "my_queue",
+      "dest-uri": "amqp://%s:%s@%s",
+      "dest-queue": "my_queue",
+      "ack-mode": "on-confirm",
+      "delete-after": "never"
+    },
+    "vhost": "/"
+  }' "$OLD_RABBITMQ_USER" "$OLD_RABBITMQ_PASSWORD" "$OLD_RABBITMQ_HOST"      "$NEW_RABBITMQ_USER" "$NEW_RABBITMQ_PASSWORD" "$NEW_RABBITMQ_HOST")
+
+  echo "$SHOVEL_JSON" | jq '.' > shovel_definition.json
+
+  echo "🚀 Shovel tanımı hedef sunucuya uygulanıyor..."
+  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD"     -H "content-type: application/json"     -X PUT -d @"shovel_definition.json"     http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2F/shovel_migration)
+
+  if [ "$RESPONSE" == "204" ]; then
+    echo "✅ Shovel kurulumu tamamlandı. CDC başlatıldı."
+  else
+    echo "❌ Shovel kurulumu başarısız oldu! HTTP kodu: $RESPONSE"
+    echo "🔍 Gönderilen veri:"
+    cat shovel_definition.json
+    exit 1
+  fi
+
+  echo "🔍 Shovel durumu kontrol ediliyor..."
+  curl -s -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD"     "http://$NEW_RABBITMQ_HOST:15672/api/shovels" | jq
+fi
