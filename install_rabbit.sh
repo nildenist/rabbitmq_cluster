@@ -503,33 +503,38 @@ sudo mkdir -p /etc/rabbitmq
 SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
 sudo hostnamectl set-hostname $SHORTNAME
 
-# Update hosts file with all cluster nodes
-echo "🔄 Configuring hosts file for cluster communication..."
-# First remove any existing entries for our nodes
-sudo sed -i "/$SHORTNAME/d" /etc/hosts
-sudo sed -i "/master-node/d" /etc/hosts
-sudo sed -i "/worker1/d" /etc/hosts
-sudo sed -i "/worker2/d" /etc/hosts
+# Add this section right after loading environment variables (around line 4)
+echo "🔄 Setting up hosts file..."
+# Backup original hosts file
+sudo cp /etc/hosts /etc/hosts.backup
 
-# Add localhost entry for current node
-echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
-echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
+# Create new hosts file with required entries
+sudo bash -c 'cat > /etc/hosts' << EOF
+# IPv4 definitions
+127.0.0.1 localhost
+127.0.0.1 ${SHORTNAME}
+${NODE_IP} ${SHORTNAME}
+${MASTER_IP} master-node
+${WORKER_1_IP} worker1
+${WORKER_2_IP} worker2
 
-# Add all cluster nodes to hosts file
-if [ "$NODE_TYPE" == "master" ]; then
-    # Master needs to know about all workers
-    echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
-    echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
-    echo "✅ Added worker nodes to hosts file"
-else
-    # Workers need to know about master
-    echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
-    echo "✅ Added master node to hosts file"
-fi
+# IPv6 definitions
+::1 ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+EOF
 
-# Verify hosts file
+# Verify the hosts file
 echo "🔄 Verifying hosts file configuration:"
 cat /etc/hosts
+
+# Test hostname resolution
+echo "🔄 Testing hostname resolution..."
+if ! ping -c 1 master-node &>/dev/null; then
+    echo "⚠️ Warning: Unable to resolve master-node"
+    exit 1
+fi
 
 # Create necessary directories first
 echo "🔄 Creating required directories..."
