@@ -599,21 +599,36 @@ done
 
 # Hostname ve hosts dosyasını ayarla
 echo "🔄 Setting up hostname and hosts..."
+SHORTNAME=$(echo $NODE_NAME | cut -d@ -f2)
+
+# Set hostname first
 sudo hostnamectl set-hostname $SHORTNAME
 
-# Hosts dosyasını temizle ve yeniden ayarla
-sudo sed -i "/$SHORTNAME/d" /etc/hosts
-sudo sed -i "/master-node/d" /etc/hosts
-sudo sed -i "/worker1/d" /etc/hosts
-sudo sed -i "/worker2/d" /etc/hosts
+# Update hosts file with proper configuration
+sudo bash -c "cat > /etc/hosts" << EOF
+127.0.0.1 localhost
+127.0.0.1 $SHORTNAME
+$NODE_IP $SHORTNAME
+$MASTER_IP master-node
+$WORKER_1_IP worker1
+$WORKER_2_IP worker2
+EOF
 
-# Yeni host girişlerini ekle
-echo "127.0.0.1 localhost" | sudo tee /etc/hosts
-echo "127.0.0.1 $SHORTNAME" | sudo tee -a /etc/hosts
-echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
-echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
-echo "$WORKER_1_IP worker1" | sudo tee -a /etc/hosts
-echo "$WORKER_2_IP worker2" | sudo tee -a /etc/hosts
+# Verify the hosts file
+echo "🔄 Verifying hosts file configuration:"
+cat /etc/hosts
+
+# Test hostname resolution
+echo "🔄 Testing hostname resolution..."
+if ! ping -c 1 master-node &>/dev/null; then
+    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
+    echo "$MASTER_IP master-node" | sudo tee -a /etc/hosts
+fi
+
+if ! ping -c 1 $SHORTNAME &>/dev/null; then
+    echo "⚠️ Warning: Unable to resolve $SHORTNAME. Adding explicit IP mapping..."
+    echo "$NODE_IP $SHORTNAME" | sudo tee -a /etc/hosts
+fi
 
 # RabbitMQ servisini başlat
 sudo systemctl daemon-reload
