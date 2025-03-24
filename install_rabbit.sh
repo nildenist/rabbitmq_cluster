@@ -3,6 +3,42 @@
 set -e  # Hata yakalama
 source rabbit.env  # rabbitmq.env dosyasını yükle
 
+# Create RabbitMQ system user and group first
+echo "🔄 Creating RabbitMQ system user and group..."
+# Create rabbitmq group if it doesn't exist
+if ! getent group rabbitmq >/dev/null; then
+    sudo groupadd -f rabbitmq
+    echo "✅ Created rabbitmq group"
+fi
+
+# Create rabbitmq user if it doesn't exist
+if ! id -u rabbitmq >/dev/null 2>&1; then
+    sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq
+    echo "✅ Created rabbitmq user"
+fi
+
+# Verify user and group exist
+if ! id -u rabbitmq >/dev/null 2>&1; then
+    echo "❌ Failed to create rabbitmq user"
+    exit 1
+fi
+
+if ! getent group rabbitmq >/dev/null; then
+    echo "❌ Failed to create rabbitmq group"
+    exit 1
+fi
+
+# Create necessary directories and set permissions
+sudo mkdir -p /var/lib/rabbitmq
+sudo mkdir -p /var/log/rabbitmq
+sudo mkdir -p /etc/rabbitmq
+sudo mkdir -p /home/rabbitmq
+
+sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
+sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
+
 # Kullanım kontrolü
 if [ -z "$1" ]; then
     echo "❌ Kullanım: ./install_rabbitmq.sh [master|worker1|worker2]"
@@ -685,30 +721,5 @@ if [ "$(sudo cat /var/lib/rabbitmq/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; the
 fi
 if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     echo "❌ Cookie mismatch in /root/.erlang.cookie"
-    exit 1
-fi
-
-# Add this section near the beginning of the script, after loading environment variables
-echo "🔄 Checking and creating RabbitMQ system user..."
-# Create rabbitmq group if it doesn't exist
-if ! getent group rabbitmq >/dev/null; then
-    sudo groupadd -f rabbitmq
-    echo "✅ Created rabbitmq group"
-fi
-
-# Create rabbitmq user if it doesn't exist
-if ! id -u rabbitmq >/dev/null 2>&1; then
-    sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq
-    echo "✅ Created rabbitmq user"
-fi
-
-# Verify user and group exist
-if ! id -u rabbitmq >/dev/null 2>&1; then
-    echo "❌ Failed to create rabbitmq user"
-    exit 1
-fi
-
-if ! getent group rabbitmq >/dev/null; then
-    echo "❌ Failed to create rabbitmq group"
     exit 1
 fi
