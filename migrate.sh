@@ -53,37 +53,85 @@ if [ "$MODE" == "target" ]; then
   enable_plugins "$NEW_RABBITMQ_HOST" "$NEW_RABBITMQ_USER" "$NEW_RABBITMQ_PASSWORD"
 
   echo "📥 Kaynak tanımlar alınıyor: $TMP_FILE"
+  curl -u "$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD" -o "$TMP_FILE"     "http://$OLD_RABBITMQ_HOST:15672/api/definitions" || {
+    echo "❌ Tanımlar alınamadı!"
+    exit 1
+  }
+
+  echo "🔧 Shovel tanımı oluşturuluyor..."
+  SHOVEL_JSON=$(printf '{
+    "component": "shovel",
+    "name": "shovel_migration",
+    "value": {
+      "src-uri": "amqp://%s:%s@%s",
+      "src-queue": "my_queue",
+      "dest-uri": "amqp://%s:%s@%s",
+      "dest-queue": "my_queue",
+      "ack-mode": "on-confirm",
+      "delete-after": "never"
+    },
+    "vhost": "/"
+  }' "$OLD_RABBITMQ_USER" "$OLD_RABBITMQ_PASSWORD" "$OLD_RABBITMQ_HOST"      "$NEW_RABBITMQ_USER" "$NEW_RABBITMQ_PASSWORD" "$NEW_RABBITMQ_HOST")
+
+  echo "$SHOVEL_JSON" | jq '.' > shovel_definition.json
+
+  echo "🚀 Shovel tanımı hedef sunucuya uygulanıyor..."
+  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD"     -H "content-type: application/json"     -X PUT -d @"shovel_definition.json"     http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2F/shovel_migration)
+
+  if [ "$RESPONSE" == "204" ]; then
+    echo "✅ Shovel kurulumu tamamlandı. CDC başlatıldı."
+  else
+    echo "❌ Shovel kurulumu başarısız oldu! HTTP kodu: $RESPONSE"
+    echo "🔍 Gönderilen veri:"
+    cat shovel_definition.json
+    exit 1
+  fi
+
+  echo "🔍 Shovel durumu kontrol ediliyor..."
+  curl -s -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD"     "http://$NEW_RABBITMQ_HOST:15672/api/shovels" | jq
+fi
+
+
+if [ "$MODE" == "target" ]; then
+  echo "📥 Kaynak tanımlar alınıyor: $TMP_FILE"
   curl -u "$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD" -o "$TMP_FILE" \
     "http://$OLD_RABBITMQ_HOST:15672/api/definitions" || {
     echo "❌ Tanımlar alınamadı!"
     exit 1
   }
 
-  # shovel tanımı ekleyelim
-  echo "🔧 Shovel tanımı oluşturuluyor..."
+  echo "🔍 Tanımlardan tüm kuyruklar alınıyor..."
+  QUEUE_NAMES=$(jq -r '.queues[] | select(.vhost == "/") | .name' "$TMP_FILE")
 
-  read -r -d '' SHOVEL_JSON << EOM
+  if [ -z "$QUEUE_NAMES" ]; then
+    echo "❌ Hiç kuyruk bulunamadı!"
+    exit 1
+  fi
+
+  for queue in $QUEUE_NAMES; do
+    echo "🔧 Shovel oluşturuluyor: shovel_migrate_$queue"
+    cat <<EOF > shovel_$queue.json
 {
   "component": "shovel",
-  "name": "shovel_migration",
+  "name": "shovel_migrate_$queue",
+  "vhost": "/",
   "value": {
     "src-uri": "amqp://$OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD@$OLD_RABBITMQ_HOST",
-    "src-queue": "my_queue",
+    "src-queue": "$queue",
     "dest-uri": "amqp://$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD@$NEW_RABBITMQ_HOST",
-    "dest-queue": "my_queue",
+    "dest-queue": "$queue",
     "ack-mode": "on-confirm",
     "delete-after": "never"
-  },
-  "vhost": "/"
+  }
 }
-EOM
+EOF
 
-  echo "$SHOVEL_JSON" | jq '.' > shovel_definition.json
+    curl -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD" -H "content-type:application/json" \
+      -X PUT -d @shovel_$queue.json \
+      http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2F/shovel_migrate_$queue
 
-  echo "🚀 Shovel tanımı hedef sunucuya uygulanıyor..."
-  curl -u "$NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD" -H "content-type: application/json" \
-    -X PUT -d @"shovel_definition.json" \
-    http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2F/shovel_migration
+    echo "✅ Shovel oluşturuldu: shovel_migrate_$queue"
+  done
 
-  echo "✅ Shovel kurulumu tamamlandı. CDC başlatıldı."
+  echo "🚀 Tüm kuyruğun shovel ile aktarımı başlatıldı."
 fi
