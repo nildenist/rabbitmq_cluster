@@ -10,11 +10,10 @@ fi
 
 source migrate.env
 
-# jq kontrolü
+# jq kontrolü ve kurulum
 if ! command -v jq >/dev/null 2>&1; then
-  echo "❌ jq yüklü değil. Kurmak için:"
-  echo "   sudo apt install jq -y"
-  exit 1
+  echo "🔧 jq yükleniyor..."
+  sudo apt update && sudo apt install -y jq
 fi
 
 MODE=$1
