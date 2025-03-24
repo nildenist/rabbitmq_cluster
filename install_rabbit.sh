@@ -683,3 +683,28 @@ if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     echo "❌ Cookie mismatch in /root/.erlang.cookie"
     exit 1
 fi
+
+# Add this section near the beginning of the script, after loading environment variables
+echo "🔄 Checking and creating RabbitMQ system user..."
+# Create rabbitmq group if it doesn't exist
+if ! getent group rabbitmq >/dev/null; then
+    sudo groupadd -f rabbitmq
+    echo "✅ Created rabbitmq group"
+fi
+
+# Create rabbitmq user if it doesn't exist
+if ! id -u rabbitmq >/dev/null 2>&1; then
+    sudo useradd -r -g rabbitmq -d /var/lib/rabbitmq -s /bin/false rabbitmq
+    echo "✅ Created rabbitmq user"
+fi
+
+# Verify user and group exist
+if ! id -u rabbitmq >/dev/null 2>&1; then
+    echo "❌ Failed to create rabbitmq user"
+    exit 1
+fi
+
+if ! getent group rabbitmq >/dev/null; then
+    echo "❌ Failed to create rabbitmq group"
+    exit 1
+fi
