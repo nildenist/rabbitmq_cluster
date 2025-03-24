@@ -1,50 +1,86 @@
 #!/bin/bash
 
-# Load environment variables from .env file
-source .env
+set -e
 
-# Set RabbitMQ API endpoint for the new cluster
-RABBITMQ_API="http://${NEW_RABBITMQ_USER}:${NEW_RABBITMQ_PASSWORD}@${NEW_RABBITMQ_HOST}:15672/api"
+# Load environment variables
+if [ ! -f migrate.env ]; then
+    echo "❌ migrate.env dosyası bulunamadı. Lütfen oluşturun."
+    exit 1
+fi
 
-echo "🔹 Enabling RabbitMQ Federation Plugin on New Cluster..."
-rabbitmq-plugins enable rabbitmq_federation
-rabbitmq-plugins enable rabbitmq_federation_management
+source migrate.env
 
-# Create Federation Upstream
-echo "🔹 Configuring Federation Upstream..."
-UPSTREAM_PAYLOAD=$(cat <<EOF
-{
-  "uri": "amqp://${OLD_RABBITMQ_USER}:${OLD_RABBITMQ_PASSWORD}@${OLD_RABBITMQ_HOST}",
-  "expires": 3600000
-}
-EOF
-)
-curl -i -u "${NEW_RABBITMQ_USER}:${NEW_RABBITMQ_PASSWORD}" \
-     -H "Content-Type: application/json" \
-     -X PUT \
-     -d "$UPSTREAM_PAYLOAD" \
-     "${RABBITMQ_API}/parameters/federation-upstream/my_old_cluster"
+echo "🔄 Kaynaktan hedefe geçiş başlatılıyor..."
+echo "📌 Kaynak: $OLD_RABBITMQ_HOST"
+echo "📌 Hedef: $NEW_RABBITMQ_HOST"
 
-# Configure Federation for Queues
-IFS=',' read -r -a QUEUE_ARRAY <<< "$FEDERATED_QUEUES"
-for QUEUE in "${QUEUE_ARRAY[@]}"; do
-    echo "🔹 Setting Federation Policy for Queue: $QUEUE"
-    curl -i -u "${NEW_RABBITMQ_USER}:${NEW_RABBITMQ_PASSWORD}" \
-         -H "Content-Type: application/json" \
-         -X PUT \
-         -d '{"pattern": "'$QUEUE'", "definition": {"federation-upstream-set": "all"}}' \
-         "${RABBITMQ_API}/policies/%2F/federate-queue-$QUEUE"
+# Gerekli komutlar kontrolü
+for CMD in curl jq; do
+    if ! command -v $CMD &> /dev/null; then
+        echo "❌ $CMD yüklü değil. Lütfen kurun: sudo apt install $CMD -y"
+        exit 1
+    fi
 done
 
-# Configure Federation for Exchanges
-IFS=',' read -r -a EXCHANGE_ARRAY <<< "$FEDERATED_EXCHANGES"
-for EXCHANGE in "${EXCHANGE_ARRAY[@]}"; do
-    echo "🔹 Setting Federation Policy for Exchange: $EXCHANGE"
-    curl -i -u "${NEW_RABBITMQ_USER}:${NEW_RABBITMQ_PASSWORD}" \
-         -H "Content-Type: application/json" \
-         -X PUT \
-         -d '{"pattern": "'$EXCHANGE'", "definition": {"federation-upstream-set": "all"}}' \
-         "${RABBITMQ_API}/policies/%2F/federate-exchange-$EXCHANGE"
+# Gerekli Pluginleri Aktifleştir
+echo "🔧 Plugin kontrolü ve etkinleştirme"
+for HOST in $OLD_RABBITMQ_HOST $NEW_RABBITMQ_HOST; do
+    for PLUGIN in rabbitmq_management rabbitmq_shovel rabbitmq_shovel_management; do
+        echo "🔍 $HOST üzerinde $PLUGIN etkin mi kontrol ediliyor..."
+        sudo rabbitmq-plugins enable $PLUGIN || true
+    done
 done
 
-echo "✅ Federation Setup Completed Successfully!"
+# Kaynak tanımlarını dışa aktar
+echo "📤 Kaynak tanımlar dışa aktarılıyor..."
+curl -s -u $OLD_RABBITMQ_USER:$OLD_RABBITMQ_PASSWORD -o $TMP_FILE http://$OLD_RABBITMQ_HOST:15672/api/definitions
+
+if [ ! -f "$TMP_FILE" ]; then
+    echo "❌ $TMP_FILE dosyası oluşturulamadı"
+    exit 1
+fi
+
+echo "✅ Tanımlar $TMP_FILE dosyasına alındı"
+
+# Kuyrukları oku ve shovel konfigürasyonu oluştur
+echo "🔨 Shovel konfigürasyonu hazırlanıyor..."
+
+SHOVEL_CONFIGS=$(jq -r --arg OLD "$OLD_RABBITMQ_HOST" --arg NEW "$NEW_RABBITMQ_HOST" --arg USER "$OLD_RABBITMQ_USER" --arg PASS "$OLD_RABBITMQ_PASSWORD" '
+    .queues[] | select(.vhost == "/") | 
+    {
+        name: "shovel_" + .name,
+        value: {
+            "src-uri": "amqp://"+$USER+":"+$PASS+"@"+$OLD,
+            "src-queue": .name,
+            "dest-uri": "amqp://"+$USER+":"+$PASS+"@"+$NEW,
+            "dest-queue": .name,
+            "ack-mode": "on-confirm",
+            "delete-after": "never"
+        }
+    }' $TMP_FILE)
+
+echo "$SHOVEL_CONFIGS" > shovel_config.json
+
+# Hedefe shovel policy gönder
+echo "🚀 Shovel konfigürasyonları hedefe gönderiliyor..."
+
+POLICIES_JSON=$(jq -n --argjson shovel "$(cat shovel_config.json | jq -s .)" '
+    {
+        "policies": [
+            ($shovel[] | {
+                "vhost": "/",
+                "name": .name,
+                "pattern": "^" + .value."src-queue" + "$",
+                "definition": {
+                    "shovel": .value
+                },
+                "priority": 0,
+                "apply-to": "queues"
+            })
+        ]
+    }
+')
+
+curl -u $NEW_RABBITMQ_USER:$NEW_RABBITMQ_PASSWORD -H "content-type: application/json" -X POST     -d "$POLICIES_JSON"     http://$NEW_RABBITMQ_HOST:15672/api/parameters/shovel/%2f
+
+echo "✅ Shovel konfigürasyonları başarıyla uygulandı."
