@@ -540,34 +540,11 @@ MAX_RETRIES=5
 RETRY_COUNT=0
 SUCCESS=false
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
-    echo "🔄 Attempting to create admin user (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
-    if sudo rabbitmqctl list_users >/dev/null 2>&1; then
-        sudo rabbitmqctl delete_user "$RABBITMQ_ADMIN_USER" || true
-        if sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" && \
-           sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator && \
-           sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*" && \
-           sudo rabbitmqctl delete_user guest || true; then
-            SUCCESS=true
-            echo "✅ Successfully created admin user"
-        fi
-    else
-        RETRY_COUNT=$((RETRY_COUNT+1))
-        echo "⚠️ RabbitMQ not ready yet, waiting before retry..."
-        sleep 10
-    fi
-done
-
-if [ "$SUCCESS" = false ]; then
-    echo "❌ Failed to create admin user after $MAX_RETRIES attempts"
-    echo "🔍 Checking RabbitMQ status and logs..."
-    sudo systemctl status rabbitmq-server
-    if ! sudo systemctl is-active rabbitmq-server >/dev/null 2>&1; then
-        echo "❌ RabbitMQ failed to start. Last 50 lines of logs:"
-        sudo journalctl -u rabbitmq-server -n 50 --no-pager
-        exit 1
-    fi
-fi
+# The script deletes the existing admin user and creates it again with the new password
+sudo rabbitmqctl delete_user "$RABBITMQ_ADMIN_USER" || true
+sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD"
+sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator
+sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"
 
 # Verify the setup
 echo "🔄 Verifying setup..."
