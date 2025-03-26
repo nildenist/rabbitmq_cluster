@@ -1,0 +1,6 @@
+NODENAME={{ inventory_hostname }}
+NODE_IP_ADDRESS={{ hostvars[inventory_hostname]['ansible_host'] }}
+NODE_PORT={{ rabbitmq_port }}
+RABBITMQ_BASE=/var/lib/rabbitmq
+RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+RABBITMQ_LOG_BASE=/var/log/rabbitmq

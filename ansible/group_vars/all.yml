@@ -1,0 +1,24 @@
+erlang_version: "26.2"
+rabbitmq_version: "4.0.1"
+
+master_node_name: "rabbit@master-node"
+master_ip: "10.128.0.46"
+worker_1_node_name: "rabbit@worker1"
+worker_1_ip: "10.128.0.47"
+worker_2_node_name: "rabbit@worker2"
+worker_2_ip: "10.128.0.48"
+
+rabbitmq_cookie: "RABBITMQ_CLUSTER_COOKIE_SECRET_KEY_STRING_1234567890"
+rabbitmq_admin_user: "admin"
+rabbitmq_admin_password: "secretsecret"
+
+rabbitmq_port: 5672
+rabbitmq_management_port: 15672
+
+rabbitmq_cluster_nodes:
+  - "{{ master_node_name }}"
+  - "{{ worker_1_node_name }}"
+  - "{{ worker_2_node_name }}"
+
+rabbitmq_log_dir: /var/log/rabbitmq
+rabbitmq_mnesia_dir: /var/lib/rabbitmq/mnesia

@@ -1,0 +1,15 @@
+listeners.tcp.default = {{ rabbitmq_port }}
+management.tcp.port = {{ rabbitmq_management_port }}
+management.tcp.ip = 0.0.0.0
+
+log.file.level = info
+log.dir = /var/log/rabbitmq
+
+cluster_partition_handling = ignore
+cluster_formation.peer_discovery_backend = classic_config
+
+{% if inventory_hostname in groups['masters'] %}
+cluster_formation.classic_config.nodes.1 = {{ master_node_name }}
+{% else %}
+cluster_formation.classic_config.nodes.1 = {{ master_node_name }}
+{% endif %}

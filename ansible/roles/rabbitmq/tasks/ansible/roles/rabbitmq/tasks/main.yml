@@ -1,0 +1,168 @@
+- name: Update /etc/hosts
+  block:
+    - name: Add hostname mapping to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "127.0.0.1 localhost"
+        - "127.0.0.1 {{ inventory_hostname }}"
+        - "{{ master_ip }} master-node"
+        - "{{ worker_1_ip }} worker1"
+        - "{{ worker_2_ip }} worker2"
+
+- name: Create rabbitmq group
+  group:
+    name: rabbitmq
+    state: present
+    system: yes
+
+- name: Create rabbitmq user
+  user:
+    name: rabbitmq
+    group: rabbitmq
+    home: /var/lib/rabbitmq
+    shell: /bin/false
+    system: yes
+
+- name: Ensure RabbitMQ directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: rabbitmq
+    group: rabbitmq
+    mode: '0755'
+  loop:
+    - /var/lib/rabbitmq
+    - /var/log/rabbitmq
+    - /etc/rabbitmq
+    - /home/rabbitmq
+
+- name: Install required packages
+  apt:
+    name:
+      - curl
+      - wget
+      - build-essential
+    update_cache: yes
+    state: present
+
+- name: Ensure Erlang is installed
+  shell: |
+    erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell || exit 1
+  register: erlang_check
+  failed_when: erlang_check.rc != 0
+  changed_when: false
+
+- name: Download and install Erlang if not present
+  when: erlang_check.failed
+  block:
+    - name: Download Erlang source
+      get_url:
+        url: "https://github.com/erlang/otp/archive/OTP-{{ erlang_version }}.tar.gz"
+        dest: "/tmp/OTP-{{ erlang_version }}.tar.gz"
+
+    - name: Extract Erlang source
+      unarchive:
+        src: "/tmp/OTP-{{ erlang_version }}.tar.gz"
+        dest: /usr/local/src/
+        remote_src: yes
+
+    - name: Build and install Erlang
+      shell: |
+        cd /usr/local/src/otp-OTP-{{ erlang_version }} &&
+        ./otp_build autoconf &&
+        ./configure --prefix=/usr/local --enable-threads --enable-smp-support --enable-kernel-poll --enable-ssl --with-ssl --enable-crypto &&
+        make -j$(nproc) &&
+        make install
+
+- name: Download RabbitMQ
+  get_url:
+    url: "https://github.com/rabbitmq/rabbitmq-server/releases/download/v{{ rabbitmq_version }}/rabbitmq-server-generic-unix-{{ rabbitmq_version }}.tar.xz"
+    dest: "/tmp/rabbitmq-server-{{ rabbitmq_version }}.tar.xz"
+
+- name: Extract and install RabbitMQ
+  unarchive:
+    src: "/tmp/rabbitmq-server-{{ rabbitmq_version }}.tar.xz"
+    dest: "/opt/"
+    remote_src: yes
+    extra_opts: [--transform, "s/^rabbitmq_server-{{ rabbitmq_version }}/rabbitmq/"]
+
+- name: Create symlinks for RabbitMQ binaries
+  file:
+    src: "/opt/rabbitmq/sbin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    force: yes
+  loop:
+    - rabbitmq-server
+    - rabbitmqctl
+    - rabbitmq-env
+    - rabbitmq-plugins
+
+- name: Deploy rabbitmq-env.conf
+  template:
+    src: rabbitmq-env.conf.j2
+    dest: /etc/rabbitmq/rabbitmq-env.conf
+    owner: rabbitmq
+    group: rabbitmq
+    mode: '0644'
+
+- name: Deploy rabbitmq.conf
+  template:
+    src: rabbitmq.conf.j2
+    dest: /etc/rabbitmq/rabbitmq.conf
+    owner: rabbitmq
+    group: rabbitmq
+    mode: '0644'
+
+- name: Deploy enabled_plugins
+  copy:
+    content: "[rabbitmq_management,rabbitmq_management_agent,rabbitmq_prometheus]."
+    dest: /etc/rabbitmq/enabled_plugins
+    owner: rabbitmq
+    group: rabbitmq
+    mode: '0644'
+
+- name: Setup Erlang cookie
+  copy:
+    content: "{{ rabbitmq_cookie }}"
+    dest: "{{ item }}"
+    owner: "{{ 'rabbitmq' if item != '/root/.erlang.cookie' else 'root' }}"
+    group: "{{ 'rabbitmq' if item != '/root/.erlang.cookie' else 'root' }}"
+    mode: '0400'
+  loop:
+    - /var/lib/rabbitmq/.erlang.cookie
+    - /home/rabbitmq/.erlang.cookie
+    - /root/.erlang.cookie
+
+- name: Deploy systemd service
+  template:
+    src: rabbitmq-server.service.j2
+    dest: /etc/systemd/system/rabbitmq-server.service
+    mode: '0644'
+
+- name: Reload and start RabbitMQ
+  systemd:
+    daemon_reload: yes
+    name: rabbitmq-server
+    enabled: yes
+    state: restarted
+
+- name: Add RabbitMQ admin user
+  shell: |
+    rabbitmqctl delete_user {{ rabbitmq_admin_user }} || true
+    rabbitmqctl add_user {{ rabbitmq_admin_user }} {{ rabbitmq_admin_password }}
+    rabbitmqctl set_user_tags {{ rabbitmq_admin_user }} administrator
+    rabbitmqctl set_permissions -p / {{ rabbitmq_admin_user }} ".*" ".*" ".*"
+    rabbitmqctl delete_user guest || true
+  when: inventory_hostname in groups['masters']
+
+- name: Join cluster if worker
+  when: inventory_hostname in groups['workers']
+  shell: |
+    rabbitmqctl stop_app
+    rabbitmqctl reset
+    rabbitmqctl join_cluster {{ master_node_name }}
+    rabbitmqctl start_app
