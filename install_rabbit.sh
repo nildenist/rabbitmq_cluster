@@ -73,28 +73,39 @@ sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
 
-# Kullanım kontrolü
-if [ -z "$1" ]; then
-    echo "❌ Kullanım: ./install_rabbitmq.sh [master|worker1|worker2]"
+# Get node type from command line argument
+NODE_TYPE=$1
+
+if [ -z "$NODE_TYPE" ]; then
+    echo "❌ Node type not specified! Usage: ./install_rabbit.sh [master|worker1|worker2]"
     exit 1
 fi
 
-NODE_TYPE=$1  # Kullanıcıdan alınan node tipi
+# Set node configuration based on type
+echo "🔄 Configuring node as $NODE_TYPE..."
+case "$NODE_TYPE" in
+    "master")
+        NODE_NAME=$MASTER_NODE_NAME
+        NODE_IP=$MASTER_IP
+        ;;
+    "worker1")
+        NODE_NAME=$WORKER_1_NODE_NAME
+        NODE_IP=$WORKER_1_IP
+        ;;
+    "worker2")
+        NODE_NAME=$WORKER_2_NODE_NAME
+        NODE_IP=$WORKER_2_IP
+        ;;
+    *)
+        echo "❌ Invalid node type! Usage: ./install_rabbit.sh [master|worker1|worker2]"
+        exit 1
+        ;;
+esac
 
-# Node tipine göre ismi ve IP adresini belirle
-if [ "$NODE_TYPE" == "master" ]; then
-    NODE_NAME=$MASTER_NODE_NAME
-    NODE_IP=$MASTER_IP
-elif [ "$NODE_TYPE" == "worker1" ]; then
-    NODE_NAME=$WORKER_1_NODE_NAME
-    NODE_IP=$WORKER_1_IP
-elif [ "$NODE_TYPE" == "worker2" ]; then
-    NODE_NAME=$WORKER_2_NODE_NAME
-    NODE_IP=$WORKER_2_IP
-else
-    echo "❌ Geçersiz node tipi! Kullanım: ./install_rabbitmq.sh [master|worker1|worker2]"
-    exit 1
-fi
+echo "✅ Node configuration:"
+echo "  - Type: $NODE_TYPE"
+echo "  - Name: $NODE_NAME"
+echo "  - IP: $NODE_IP"
 
 # Add this section after the NODE_TYPE check and before starting the installation
 
