@@ -568,8 +568,11 @@ if [ "$SUCCESS" = false ]; then
     echo "❌ Failed to create admin user after $MAX_RETRIES attempts"
     echo "🔍 Checking RabbitMQ status and logs..."
     sudo systemctl status rabbitmq-server
-    sudo journalctl -u rabbitmq-server -n 50
-    exit 1
+    if ! sudo systemctl is-active rabbitmq-server >/dev/null 2>&1; then
+        echo "❌ RabbitMQ failed to start. Last 50 lines of logs:"
+        sudo journalctl -u rabbitmq-server -n 50 --no-pager
+        exit 1
+    fi
 fi
 
 # Verify the setup
@@ -655,4 +658,40 @@ fi
 if [ "$(sudo cat /root/.erlang.cookie)" != "$RABBITMQ_COOKIE" ]; then
     echo "❌ Cookie mismatch in /root/.erlang.cookie"
     exit 1
+fi
+
+# Add node name verification and correction
+echo "🔄 Verifying node name configuration..."
+CURRENT_NODENAME=$(sudo rabbitmqctl status | grep -oP "Node: \K[^,]*" || echo "")
+EXPECTED_NODENAME="${NODE_NAME}"
+
+if [ "$CURRENT_NODENAME" != "$EXPECTED_NODENAME" ]; then
+    echo "⚠️ Node name mismatch. Current: $CURRENT_NODENAME, Expected: $EXPECTED_NODENAME"
+    echo "🔄 Updating node name configuration..."
+    
+    # Stop RabbitMQ
+    sudo systemctl stop rabbitmq-server
+    
+    # Update the node name in rabbitmq-env.conf
+    sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
+NODENAME=${NODE_NAME}
+NODE_IP_ADDRESS=${NODE_IP}
+NODE_PORT=${RABBITMQ_PORT}
+EOF
+    
+    # Clear mnesia directory to avoid conflicts
+    sudo rm -rf /var/lib/rabbitmq/mnesia/*
+    
+    # Restart RabbitMQ with new configuration
+    sudo systemctl start rabbitmq-server
+    sleep 10
+    
+    # Verify the change
+    NEW_NODENAME=$(sudo rabbitmqctl status | grep -oP "Node: \K[^,]*" || echo "")
+    if [ "$NEW_NODENAME" != "$EXPECTED_NODENAME" ]; then
+        echo "❌ Failed to update node name. Current: $NEW_NODENAME"
+        exit 1
+    else
+        echo "✅ Node name successfully updated to $NEW_NODENAME"
+    fi
 fi
