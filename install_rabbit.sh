@@ -178,6 +178,8 @@ if [ -z "$RABBITMQ_ADMIN_USER" ] || [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
     fi
 fi
 
+echo "Debug - Admin User: $RABBITMQ_ADMIN_USER, Password: $RABBITMQ_ADMIN_PASSWORD"
+
 echo "🚀 RabbitMQ ve Erlang Kurulum Başlıyor..."
 echo "📌 Erlang Version: $ERLANG_VERSION"
 echo "📌 RabbitMQ Version: $RABBITMQ_VERSION"
@@ -534,22 +536,47 @@ sudo systemctl restart rabbitmq-server
 echo "🔄 Waiting for RabbitMQ to fully start..."
 sleep 30
 
-# Set up admin user
+# Set up admin user with better error handling and verification
 echo "🔄 Setting up admin user..."
 MAX_RETRIES=5
 RETRY_COUNT=0
-SUCCESS=false
 
-# The script deletes the existing admin user and creates it again with the new password
-sudo rabbitmqctl delete_user "$RABBITMQ_ADMIN_USER" || true
-sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD"
-sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator
-sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    echo "Attempt $((RETRY_COUNT+1)) of $MAX_RETRIES to create admin user..."
+    
+    # Wait for RabbitMQ to be fully started
+    if sudo rabbitmqctl await_startup; then
+        # Delete existing user if exists
+        sudo rabbitmqctl delete_user "$RABBITMQ_ADMIN_USER" || true
+        
+        # Create new admin user with administrator tag and full permissions
+        if sudo rabbitmqctl add_user "$RABBITMQ_ADMIN_USER" "$RABBITMQ_ADMIN_PASSWORD" && \
+           sudo rabbitmqctl set_user_tags "$RABBITMQ_ADMIN_USER" administrator && \
+           sudo rabbitmqctl set_permissions -p "/" "$RABBITMQ_ADMIN_USER" ".*" ".*" ".*"; then
+            
+            echo "✅ Admin user created successfully"
+            # Verify user was created
+            if sudo rabbitmqctl list_users | grep -q "$RABBITMQ_ADMIN_USER"; then
+                echo "✅ Verified admin user exists"
+                break
+            fi
+        fi
+    fi
+    
+    RETRY_COUNT=$((RETRY_COUNT+1))
+    echo "⚠️ Waiting 10 seconds before retry..."
+    sleep 10
+done
 
-# Verify the setup
-echo "🔄 Verifying setup..."
-sudo rabbitmqctl status
-sudo rabbitmqctl list_users
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Failed to create admin user after $MAX_RETRIES attempts"
+    echo "🔍 Current users in system:"
+    sudo rabbitmqctl list_users
+    exit 1
+fi
+
+# Delete default guest user for security
+sudo rabbitmqctl delete_user guest || true
 
 # Worker node ise cluster'a katıl
 if [ "$NODE_TYPE" != "master" ]; then
