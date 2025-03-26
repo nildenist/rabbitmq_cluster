@@ -3,39 +3,87 @@
 set -e  # Hata yakalama
 source rabbit.env  # rabbitmq.env dosyasını yükle
 
-# Add this section right after line 4 (after source rabbit.env)
-echo "🔄 Setting up hosts file..."
-# Backup original hosts file
+# Add this right after source rabbit.env (around line 4)
+# Get node type from command line argument
+NODE_TYPE=$1
+
+if [ -z "$NODE_TYPE" ]; then
+    echo "❌ Node type not specified! Usage: ./install_rabbit.sh [master|worker1|worker2]"
+    exit 1
+fi
+
+# Set node configuration based on type
+echo "🔄 Configuring node as $NODE_TYPE..."
+case "$NODE_TYPE" in
+    "master")
+        NODE_NAME=$MASTER_NODE_NAME
+        NODE_IP=$MASTER_IP
+        HOSTNAME="master-node"
+        ;;
+    "worker1")
+        NODE_NAME=$WORKER_1_NODE_NAME
+        NODE_IP=$WORKER_1_IP
+        HOSTNAME="worker1"
+        ;;
+    "worker2")
+        NODE_NAME=$WORKER_2_NODE_NAME
+        NODE_IP=$WORKER_2_IP
+        HOSTNAME="worker2"
+        ;;
+    *)
+        echo "❌ Invalid node type! Usage: ./install_rabbit.sh [master|worker1|worker2]"
+        exit 1
+        ;;
+esac
+
+# Set hostname first
+echo "🔄 Setting hostname to $HOSTNAME..."
+sudo hostnamectl set-hostname $HOSTNAME
+
+# Update /etc/hosts before anything else
+echo "🔄 Updating hosts file..."
 sudo cp /etc/hosts /etc/hosts.backup
-
-# Create new hosts file with required entries
 sudo bash -c "cat > /etc/hosts" << EOF
-# IPv4 definitions
 127.0.0.1 localhost
-127.0.0.1 ${SHORTNAME}
-${NODE_IP} ${SHORTNAME}
-${MASTER_IP} master-node
-${WORKER_1_IP} worker1
-${WORKER_2_IP} worker2
+127.0.0.1 $HOSTNAME
+$NODE_IP $HOSTNAME
+$MASTER_IP master-node
+$WORKER_1_IP worker1
+$WORKER_2_IP worker2
 
-# IPv6 definitions
 ::1 ip6-localhost ip6-loopback
 fe00::0 ip6-localnet
 ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
-169.254.169.254 metadata.google.internal metadata
 EOF
 
-# Verify the hosts file
-echo "🔄 Verifying hosts file configuration:"
-cat /etc/hosts
+# Set RabbitMQ environment variables
+export RABBITMQ_NODENAME=$NODE_NAME
+export RABBITMQ_NODE_IP_ADDRESS=$NODE_IP
 
-# Test hostname resolution
-echo "🔄 Testing hostname resolution..."
-if ! ping -c 1 master-node &>/dev/null; then
-    echo "⚠️ Warning: Unable to resolve master-node. Adding explicit IP mapping..."
-    echo "${MASTER_IP} master-node" | sudo tee -a /etc/hosts
-fi
+# Create rabbitmq-env.conf with proper settings
+echo "🔄 Creating RabbitMQ environment configuration..."
+sudo mkdir -p /etc/rabbitmq
+sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
+NODENAME=${NODE_NAME}
+NODE_IP_ADDRESS=${NODE_IP}
+NODE_PORT=${RABBITMQ_PORT}
+EOF
+
+# Stop RabbitMQ and clean up existing state
+echo "🔄 Cleaning up existing RabbitMQ state..."
+sudo systemctl stop rabbitmq-server || true
+sudo rm -rf /var/lib/rabbitmq/mnesia/*
+sudo rm -f /var/lib/rabbitmq/.erlang.cookie
+sudo rm -f /root/.erlang.cookie
+sudo rm -rf /etc/rabbitmq/rabbitmq.conf
+
+# Remove any existing RabbitMQ installation
+echo "🔄 Removing any existing RabbitMQ installation..."
+sudo rm -rf /opt/rabbitmq
+sudo rm -f /usr/local/bin/rabbitmqctl
+sudo rm -f /usr/local/bin/rabbitmq-server
+sudo rm -f /usr/local/bin/rabbitmq-env
 
 # Create RabbitMQ system user and group first
 echo "🔄 Creating RabbitMQ system user and group..."
@@ -72,62 +120,6 @@ sudo chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /var/log/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /etc/rabbitmq
 sudo chown -R rabbitmq:rabbitmq /home/rabbitmq
-
-# Get node type from command line argument
-NODE_TYPE=$1
-
-if [ -z "$NODE_TYPE" ]; then
-    echo "❌ Node type not specified! Usage: ./install_rabbit.sh [master|worker1|worker2]"
-    exit 1
-fi
-
-# Set node configuration based on type
-echo "🔄 Configuring node as $NODE_TYPE..."
-case "$NODE_TYPE" in
-    "master")
-        NODE_NAME=$MASTER_NODE_NAME
-        NODE_IP=$MASTER_IP
-        ;;
-    "worker1")
-        NODE_NAME=$WORKER_1_NODE_NAME
-        NODE_IP=$WORKER_1_IP
-        ;;
-    "worker2")
-        NODE_NAME=$WORKER_2_NODE_NAME
-        NODE_IP=$WORKER_2_IP
-        ;;
-    *)
-        echo "❌ Invalid node type! Usage: ./install_rabbit.sh [master|worker1|worker2]"
-        exit 1
-        ;;
-esac
-
-# Set the node name in environment
-export RABBITMQ_NODENAME=$NODE_NAME
-export RABBITMQ_NODE_IP_ADDRESS=$NODE_IP
-
-# Create rabbitmq-env.conf before any RabbitMQ operations
-echo "🔄 Creating RabbitMQ environment configuration..."
-sudo mkdir -p /etc/rabbitmq
-sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
-NODENAME=${NODE_NAME}
-NODE_IP_ADDRESS=${NODE_IP}
-NODE_PORT=${RABBITMQ_PORT}
-RABBITMQ_BASE=/var/lib/rabbitmq
-RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-RABBITMQ_LOG_BASE=/var/log/rabbitmq
-EOF
-
-# Set proper permissions
-sudo chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq-env.conf
-sudo chmod 644 /etc/rabbitmq/rabbitmq-env.conf
-
-# Stop RabbitMQ if it's running and clean up any existing state
-echo "🔄 Cleaning up existing RabbitMQ state..."
-sudo systemctl stop rabbitmq-server || true
-sudo rm -rf /var/lib/rabbitmq/mnesia/*
-sudo rm -f /var/lib/rabbitmq/.erlang.cookie
-sudo rm -f /root/.erlang.cookie
 
 # Set up Erlang cookie with proper permissions
 echo "🔄 Setting up Erlang cookie..."
@@ -410,12 +402,6 @@ fi
 echo "🔄 RabbitMQ $RABBITMQ_VERSION kuruluyor..."
 wget -q https://github.com/rabbitmq/rabbitmq-server/releases/download/v$RABBITMQ_VERSION/rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
 tar -xf rabbitmq-server-generic-unix-$RABBITMQ_VERSION.tar.xz
-
-# Remove old installation if exists
-sudo rm -rf /opt/rabbitmq
-sudo rm -f /usr/local/bin/rabbitmqctl
-sudo rm -f /usr/local/bin/rabbitmq-server
-sudo rm -f /usr/local/bin/rabbitmq-env
 
 # Install RabbitMQ
 sudo mv rabbitmq_server-$RABBITMQ_VERSION /opt/rabbitmq
