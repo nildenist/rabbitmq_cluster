@@ -102,12 +102,40 @@ case "$NODE_TYPE" in
         ;;
 esac
 
-echo "✅ Node configuration:"
-echo "  - Type: $NODE_TYPE"
-echo "  - Name: $NODE_NAME"
-echo "  - IP: $NODE_IP"
+# Set the node name in environment
+export RABBITMQ_NODENAME=$NODE_NAME
+export RABBITMQ_NODE_IP_ADDRESS=$NODE_IP
 
-# Add this section after the NODE_TYPE check and before starting the installation
+# Create rabbitmq-env.conf before any RabbitMQ operations
+echo "🔄 Creating RabbitMQ environment configuration..."
+sudo mkdir -p /etc/rabbitmq
+sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
+NODENAME=${NODE_NAME}
+NODE_IP_ADDRESS=${NODE_IP}
+NODE_PORT=${RABBITMQ_PORT}
+RABBITMQ_BASE=/var/lib/rabbitmq
+RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
+RABBITMQ_LOG_BASE=/var/log/rabbitmq
+EOF
+
+# Set proper permissions
+sudo chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq-env.conf
+sudo chmod 644 /etc/rabbitmq/rabbitmq-env.conf
+
+# Stop RabbitMQ if it's running and clean up any existing state
+echo "🔄 Cleaning up existing RabbitMQ state..."
+sudo systemctl stop rabbitmq-server || true
+sudo rm -rf /var/lib/rabbitmq/mnesia/*
+sudo rm -f /var/lib/rabbitmq/.erlang.cookie
+sudo rm -f /root/.erlang.cookie
+
+# Set up Erlang cookie with proper permissions
+echo "🔄 Setting up Erlang cookie..."
+echo "$RABBITMQ_COOKIE" | sudo tee /var/lib/rabbitmq/.erlang.cookie > /dev/null
+echo "$RABBITMQ_COOKIE" | sudo tee /root/.erlang.cookie > /dev/null
+sudo chmod 400 /var/lib/rabbitmq/.erlang.cookie
+sudo chmod 400 /root/.erlang.cookie
+sudo chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
 
 # Prompt for RabbitMQ admin credentials if not already set
 if [ -z "$RABBITMQ_ADMIN_USER" ] || [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
@@ -407,17 +435,6 @@ echo "🔄 Setting up RabbitMQ..."
 # Create RabbitMQ configuration directory
 sudo mkdir -p /etc/rabbitmq
 
-# Create rabbitmq-env.conf
-echo "🔄 Creating RabbitMQ environment configuration..."
-sudo tee /etc/rabbitmq/rabbitmq-env.conf << EOF
-NODENAME=${NODE_NAME}
-NODE_IP_ADDRESS=${NODE_IP}
-NODE_PORT=${RABBITMQ_PORT}
-RABBITMQ_BASE=/var/lib/rabbitmq
-RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq
-RABBITMQ_LOG_BASE=/var/log/rabbitmq
-EOF
-
 # Create rabbitmq.conf
 echo "🔄 Creating RabbitMQ main configuration..."
 sudo tee /etc/rabbitmq/rabbitmq.conf << EOF
@@ -523,26 +540,6 @@ sudo chmod 755 /opt/rabbitmq
 echo "🔄 Preparing RabbitMQ directories and permissions..."
 sudo systemctl stop rabbitmq-server || true
 sudo rm -rf /var/lib/rabbitmq/mnesia/*
-
-# Set up Erlang cookie with proper permissions
-echo "🔄 Setting up Erlang cookie..."
-for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/rabbitmq/.erlang.cookie; do
-    sudo rm -f "$COOKIE_PATH"
-    echo "$RABBITMQ_COOKIE" | sudo tee "$COOKIE_PATH" > /dev/null
-    sudo chmod 400 "$COOKIE_PATH"
-    if [[ "$COOKIE_PATH" == "/var/lib/rabbitmq/.erlang.cookie" ]] || [[ "$COOKIE_PATH" == "/home/rabbitmq/.erlang.cookie" ]]; then
-        sudo chown rabbitmq:rabbitmq "$COOKIE_PATH"
-    fi
-done
-
-# Verify cookie files
-echo "🔄 Verifying cookie files..."
-for COOKIE_PATH in /var/lib/rabbitmq/.erlang.cookie /root/.erlang.cookie /home/rabbitmq/.erlang.cookie; do
-    if [ "$(sudo cat $COOKIE_PATH)" != "$RABBITMQ_COOKIE" ]; then
-        echo "❌ Cookie mismatch in $COOKIE_PATH"
-        exit 1
-    fi
-done
 
 # Start RabbitMQ with proper delay
 echo "🔄 Starting RabbitMQ..."
