@@ -174,6 +174,12 @@ update_rabbitmq_config() {
     local config_file="/etc/rabbitmq/rabbitmq.conf"
     local temp_config="/tmp/rabbitmq_temp_config.conf"
     
+    # Check RabbitMQ version for proper log rotation syntax
+    local rabbitmq_version_major=""
+    if [[ "$RABBITMQ_VERSION" =~ ^([0-9]+)\. ]]; then
+        rabbitmq_version_major="${BASH_REMATCH[1]}"
+    fi
+    
     if [ -f "$config_file" ]; then
         # Read existing config
         ${SUDO_CMD} cp "$config_file" "$temp_config"
@@ -181,17 +187,36 @@ update_rabbitmq_config() {
         # Remove existing log-related lines to avoid duplicates
         ${SUDO_CMD} sed -i '/^log\./d' "$temp_config"
         
-        # Add new log configuration
-        ${SUDO_CMD} tee -a "$temp_config" << EOF
+        # Add version-appropriate log configuration
+        if [[ "$rabbitmq_version_major" -ge 4 ]]; then
+            # RabbitMQ 4.x+ format
+            ${SUDO_CMD} tee -a "$temp_config" << EOF
 
-# Log Configuration with Rotation (Added by patch script)
+# Log Configuration with Rotation (Added by patch script - RabbitMQ 4.x+)
 log.file.level = info
 log.dir = $RABBITMQ_LOG_DIR
 log.file = rabbit.log
-log.file.rotation.date = \$daily
-log.file.rotation.size = $LOG_MAX_SIZE
+log.file.rotation.date = \$W5D16
+log.file.rotation.size = ${LOG_MAX_SIZE}000000
 log.file.rotation.count = $LOG_ROTATE_COUNT
 log.file.formatter = plaintext
+EOF
+        else
+            # RabbitMQ 3.x format (your version)
+            ${SUDO_CMD} tee -a "$temp_config" << EOF
+
+# Log Configuration with Rotation (Added by patch script - RabbitMQ 3.x)
+log.file.level = info
+log.dir = $RABBITMQ_LOG_DIR
+log.file = rabbit.log
+log.file.rotation.date = {}
+log.file.rotation.size = ${LOG_MAX_SIZE}000000
+log.file.rotation.count = $LOG_ROTATE_COUNT
+EOF
+        fi
+        
+        # Add common logging settings
+        ${SUDO_CMD} tee -a "$temp_config" << EOF
 
 # Connection and Channel Logging (reduced verbosity)
 log.connection.level = info
@@ -201,16 +226,18 @@ EOF
         
         # Replace the original config
         ${SUDO_CMD} mv "$temp_config" "$config_file"
-        echo "✅ Updated $config_file with log rotation settings"
+        echo "✅ Updated $config_file with log rotation settings (RabbitMQ $RABBITMQ_VERSION)"
     else
         # Create new config file with log settings
-        ${SUDO_CMD} tee "$config_file" << EOF
-# RabbitMQ Configuration with Log Rotation
+        if [[ "$rabbitmq_version_major" -ge 4 ]]; then
+            # RabbitMQ 4.x+ format
+            ${SUDO_CMD} tee "$config_file" << EOF
+# RabbitMQ Configuration with Log Rotation (RabbitMQ 4.x+)
 log.file.level = info
 log.dir = $RABBITMQ_LOG_DIR
 log.file = rabbit.log
-log.file.rotation.date = \$daily
-log.file.rotation.size = $LOG_MAX_SIZE
+log.file.rotation.date = \$W5D16
+log.file.rotation.size = ${LOG_MAX_SIZE}000000
 log.file.rotation.count = $LOG_ROTATE_COUNT
 log.file.formatter = plaintext
 
@@ -219,7 +246,24 @@ log.connection.level = info
 log.channel.level = info
 log.queue.level = info
 EOF
-        echo "✅ Created new $config_file with log rotation settings"
+        else
+            # RabbitMQ 3.x format (your version)
+            ${SUDO_CMD} tee "$config_file" << EOF
+# RabbitMQ Configuration with Log Rotation (RabbitMQ 3.x)
+log.file.level = info
+log.dir = $RABBITMQ_LOG_DIR
+log.file = rabbit.log
+log.file.rotation.date = {}
+log.file.rotation.size = ${LOG_MAX_SIZE}000000
+log.file.rotation.count = $LOG_ROTATE_COUNT
+
+# Connection and Channel Logging (reduced verbosity)
+log.connection.level = info
+log.channel.level = info
+log.queue.level = info
+EOF
+        fi
+        echo "✅ Created new $config_file with log rotation settings (RabbitMQ $RABBITMQ_VERSION)"
     fi
 }
 

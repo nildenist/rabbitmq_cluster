@@ -432,10 +432,10 @@ management.tcp.ip = 0.0.0.0
 
 # Log Configuration with Rotation
 log.file.level = info
-log.dir = /var/log/rabbitmq
+log.dir = $RABBITMQ_LOG_DIR
 log.file = rabbit.log
-log.file.rotation.date = $daily
-log.file.rotation.size = ${LOG_MAX_SIZE}
+log.file.rotation.date = {}
+log.file.rotation.size = ${LOG_MAX_SIZE}000000
 log.file.rotation.count = ${LOG_ROTATE_COUNT}
 log.file.formatter = plaintext
 
