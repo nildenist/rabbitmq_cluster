@@ -430,8 +430,19 @@ listeners.tcp.default = ${RABBITMQ_PORT}
 management.tcp.port = ${RABBITMQ_MANAGEMENT_PORT}
 management.tcp.ip = 0.0.0.0
 
+# Log Configuration with Rotation
 log.file.level = info
 log.dir = /var/log/rabbitmq
+log.file = rabbit.log
+log.file.rotation.date = $daily
+log.file.rotation.size = ${LOG_MAX_SIZE}
+log.file.rotation.count = ${LOG_ROTATE_COUNT}
+log.file.formatter = plaintext
+
+# Connection and Channel Logging (reduced verbosity)
+log.connection.level = info
+log.channel.level = info
+log.queue.level = info
 
 cluster_partition_handling = ignore
 cluster_formation.peer_discovery_backend = classic_config
@@ -723,4 +734,148 @@ EOF
     else
         echo "✅ Node name successfully updated to $NEW_NODENAME"
     fi
+fi
+
+# Setup log retention management
+setup_log_retention() {
+    echo "🔄 Setting up RabbitMQ log retention management..."
+    
+    # Copy the log cleanup script to RabbitMQ bin directory
+    sudo mkdir -p /opt/rabbitmq/bin
+    sudo cp "$(dirname "$0")/cleanup_rabbitmq_logs.sh" "$LOG_CLEANUP_SCRIPT_PATH"
+    sudo chmod +x "$LOG_CLEANUP_SCRIPT_PATH"
+    sudo chown rabbitmq:rabbitmq "$LOG_CLEANUP_SCRIPT_PATH"
+    
+    # Create a symlink for easy access
+    sudo ln -sf "$LOG_CLEANUP_SCRIPT_PATH" /usr/local/bin/rabbitmq-log-cleanup
+    
+    echo "✅ Log cleanup script installed at $LOG_CLEANUP_SCRIPT_PATH"
+    
+    # Setup cron job for automated cleanup
+    echo "🔄 Setting up automated log cleanup cron job..."
+    
+    # Create cron job that runs daily at specified hour
+    CRON_JOB="0 $LOG_CLEANUP_HOUR * * * /bin/bash $LOG_CLEANUP_SCRIPT_PATH >> /var/log/rabbitmq/cleanup.log 2>&1"
+    
+    # Check if cron job already exists
+    if ! crontab -l 2>/dev/null | grep -q "$LOG_CLEANUP_SCRIPT_PATH"; then
+        # Add the cron job
+        (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+        echo "✅ Cron job added: Daily cleanup at ${LOG_CLEANUP_HOUR}:00 AM"
+    else
+        echo "✅ Cron job already exists for log cleanup"
+    fi
+    
+    # Create logrotate configuration for additional safety
+    echo "🔄 Setting up logrotate configuration..."
+    sudo tee /etc/logrotate.d/rabbitmq << EOF
+$RABBITMQ_LOG_DIR/*.log {
+    daily
+    missingok
+    rotate $LOG_ROTATE_COUNT
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+    create 640 rabbitmq rabbitmq
+}
+EOF
+    
+    echo "✅ Logrotate configuration created"
+    
+    # Test the cleanup script
+    echo "🔄 Testing log cleanup script..."
+    if sudo -u rabbitmq bash "$LOG_CLEANUP_SCRIPT_PATH" --dry-run 2>/dev/null; then
+        echo "✅ Log cleanup script test passed"
+    else
+        echo "⚠️ Log cleanup script test had issues, but installation continues"
+    fi
+    
+    # Create monitoring script
+    create_log_monitoring_script
+    
+    echo "✅ Log retention management setup completed"
+    echo ""
+    echo "📊 Log Management Summary:"
+    echo "  📁 Log directory: $RABBITMQ_LOG_DIR"
+    echo "  🗓️ Retention period: $LOG_RETENTION_DAYS days"
+    echo "  🔄 Daily cleanup at: ${LOG_CLEANUP_HOUR}:00 AM"
+    echo "  📜 Cleanup script: $LOG_CLEANUP_SCRIPT_PATH"
+    echo "  ⚡ Manual cleanup: sudo rabbitmq-log-cleanup"
+    echo "  📈 Log monitoring: sudo rabbitmq-log-monitor"
+}
+
+create_log_monitoring_script() {
+    echo "🔄 Creating log monitoring script..."
+    
+    sudo tee /opt/rabbitmq/bin/monitor_logs.sh << 'EOF'
+#!/bin/bash
+# RabbitMQ Log Monitoring Script
+
+source /home/$(whoami)/rabbitmq_cluster/rabbit.env 2>/dev/null || {
+    RABBITMQ_LOG_DIR="/var/log/rabbitmq"
+    DISK_USAGE_THRESHOLD=80
+}
+
+echo "=== RabbitMQ Log Monitoring Report ==="
+echo "Generated: $(date)"
+echo ""
+
+# Disk usage
+DISK_USAGE=$(df "$RABBITMQ_LOG_DIR" | awk 'NR==2 {sub(/%$/, "", $5); print $5}')
+echo "💽 Disk Usage: $DISK_USAGE%"
+if [ "$DISK_USAGE" -gt "$DISK_USAGE_THRESHOLD" ]; then
+    echo "  ⚠️ WARNING: Above threshold ($DISK_USAGE_THRESHOLD%)"
+fi
+
+# Log directory size
+LOG_SIZE=$(du -sh "$RABBITMQ_LOG_DIR" 2>/dev/null | awk '{print $1}')
+echo "📁 Log Directory Size: $LOG_SIZE"
+
+# Log file count and details
+echo ""
+echo "📄 Log Files:"
+find "$RABBITMQ_LOG_DIR" -type f \( -name "*.log" -o -name "*.log.*" \) -printf "%T@ %Tc %s %p\n" | sort -n | while read timestamp date size file; do
+    human_size=$(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "${size}B")
+    echo "  $(basename "$file"): $human_size ($(echo "$date" | cut -d' ' -f1-3))"
+done
+
+# Largest files
+echo ""
+echo "🔝 Largest Log Files:"
+find "$RABBITMQ_LOG_DIR" -type f -exec ls -la {} + | sort -k5 -n -r | head -5 | while read line; do
+    size=$(echo "$line" | awk '{print $5}')
+    human_size=$(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "${size}B")
+    filename=$(echo "$line" | awk '{print $9}')
+    echo "  $(basename "$filename"): $human_size"
+done
+
+echo ""
+echo "🕒 Last Cleanup: $(find /var/log/rabbitmq -name "cleanup.log" -exec tail -1 {} \; 2>/dev/null | head -1 | cut -d']' -f1 | cut -d'[' -f2 || echo "Never")"
+EOF
+    
+    sudo chmod +x /opt/rabbitmq/bin/monitor_logs.sh
+    sudo ln -sf /opt/rabbitmq/bin/monitor_logs.sh /usr/local/bin/rabbitmq-log-monitor
+    
+    echo "✅ Log monitoring script created: rabbitmq-log-monitor"
+}
+
+# Ask user if they want to setup log retention
+echo ""
+read -p "🔄 Would you like to setup automated log retention management (recommended)? (Y/n): " SETUP_LOG_RETENTION
+SETUP_LOG_RETENTION=${SETUP_LOG_RETENTION:-Y}
+
+if [[ "$SETUP_LOG_RETENTION" =~ ^[yY]$ ]]; then
+    # Ask for custom retention period
+    read -p "📅 Log retention period in days [default: $LOG_RETENTION_DAYS]: " CUSTOM_RETENTION
+    if [[ -n "$CUSTOM_RETENTION" && "$CUSTOM_RETENTION" -gt 0 ]]; then
+        LOG_RETENTION_DAYS=$CUSTOM_RETENTION
+        # Update the config file
+        sed -i "s/LOG_RETENTION_DAYS=.*/LOG_RETENTION_DAYS=$LOG_RETENTION_DAYS/" rabbit.env
+    fi
+    
+    setup_log_retention
+else
+    echo "⚠️ Skipping log retention setup. Logs may grow and consume disk space!"
+    echo "ℹ️ You can manually setup log retention later using the cleanup script."
 fi
